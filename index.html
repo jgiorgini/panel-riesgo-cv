@@ -68,6 +68,49 @@ const KDIGO_GRID = {
 
 /* ---------- definición de scores ---------- */
 
+/* ---------- SCORE2-LAC (Bijkerk et al. Eur Heart J 2026, doi:10.1093/eurheartj/ehag698) ---------- */
+/* Coeficientes base SCORE2 (Supplementary Methods Table 1) + factores de recalibración
+   por región LAC y sexo (Supplementary Table 8). Transcripto directo del suplementario. */
+
+const SCORE2_BASE = {
+  M: { age: 0.3742, smoke: 0.6012, sbp: 0.2777, dm: 0.6457, tchol: 0.1458, hdl: -0.2698, smokeAge: -0.0755, sbpAge: -0.0255, tcholAge: -0.0281, hdlAge: 0.0426, dmAge: -0.0983, baseSurv: 0.9605 },
+  F: { age: 0.4648, smoke: 0.7744, sbp: 0.3131, dm: 0.8096, tchol: 0.1002, hdl: -0.2606, smokeAge: -0.1088, sbpAge: -0.0277, tcholAge: -0.0226, hdlAge: 0.0613, dmAge: -0.1272, baseSurv: 0.9776 },
+};
+
+const SCORE2_LAC_RESCALE = {
+  low: { M: [-0.124790568, 0.828096449], F: [-0.923656716, 0.604566444] },
+  moderate: { M: [0.238823871, 0.890550372], F: [-0.549083177, 0.655753545] },
+  high: { M: [0.301272602, 0.825019434], F: [-0.360726291, 0.620297489] },
+  veryhigh: { M: [0.223031762, 0.655657363], F: [-0.264237736, 0.45124002] },
+};
+
+const LAC_REGION_LABEL = { low: "Bajo riesgo", moderate: "Riesgo moderado", high: "Alto riesgo", veryhigh: "Muy alto riesgo" };
+
+/* País -> región (Supplementary Table 1). Ordenado igual que la tabla. */
+const LAC_COUNTRY_REGION = {
+  "Perú": "low", "Costa Rica": "low", "Chile": "low", "Puerto Rico": "low",
+  "Ecuador": "moderate", "El Salvador": "moderate", "Panamá": "moderate", "Colombia": "moderate", "Uruguay": "moderate", "Bermudas": "moderate", "Guatemala": "moderate",
+  "México": "high", "Argentina": "high", "Trinidad y Tobago": "high", "Jamaica": "high", "Brasil": "high", "Barbados": "high", "Belice": "high", "Paraguay": "high", "Venezuela": "high", "Cuba": "high", "Antigua y Barbuda": "high", "Santa Lucía": "high", "Bolivia": "high", "Nicaragua": "high", "Islas Vírgenes de EE.UU.": "high", "San Vicente y las Granadinas": "high", "Bahamas": "high", "Granada": "high", "Honduras": "high", "República Dominicana": "high", "Dominica": "high", "San Cristóbal y Nieves": "high", "Surinam": "high",
+  "Guyana": "veryhigh", "Haití": "veryhigh",
+};
+
+function score2LacOf(d) {
+  const age = num(d.age), sbp = num(d.sbp), tcholMgdl = num(d.totalChol), hdlMgdl = num(d.hdl);
+  const sex = d.sex, region = d.lacRegion;
+  if (!has(age) || !has(sbp) || !has(tcholMgdl) || !has(hdlMgdl) || !sex || !region) return null;
+  const tchol = tcholMgdl / 38.67, hdl = hdlMgdl / 38.67; // mg/dL -> mmol/L
+  const smoke = d.smoker === "si" ? 1 : 0;
+  const dm = d.dm === "si" ? 1 : 0;
+  const c = SCORE2_BASE[sex];
+  const cage = (age - 60) / 5, csbp = (sbp - 120) / 20, ctchol = tchol - 6, chdl = (hdl - 1.3) / 0.5;
+  const lp = c.age * cage + c.smoke * smoke + c.sbp * csbp + c.dm * dm + c.tchol * ctchol + c.hdl * chdl +
+    c.smokeAge * cage * smoke + c.sbpAge * cage * csbp + c.tcholAge * cage * ctchol + c.hdlAge * cage * chdl + c.dmAge * cage * dm;
+  const uncalibrated = 1 - Math.pow(c.baseSurv, Math.exp(lp));
+  const [scale1, scale2] = SCORE2_LAC_RESCALE[region][sex];
+  const recalibrated = 1 - Math.exp(-Math.exp(scale1 + scale2 * Math.log(-Math.log(1 - uncalibrated))));
+  return recalibrated * 100;
+}
+
 const SCORES = [
   {
     id: "fib4",
@@ -209,6 +252,21 @@ const SCORES = [
     },
   },
   {
+    id: "score2lac",
+    name: "SCORE2-LAC",
+    group: "Cardio",
+    required: ["age", "sex", "sbp", "totalChol", "hdl", "smoker", "dm", "lacRegion"],
+    calc: (d) => {
+      const age = num(d.age);
+      const outOfRange = [];
+      if (age < 40 || age > 69) outOfRange.push("edad fuera del rango validado (40–69 años)");
+      if (d.dm === "si") outOfRange.push("paciente diabético — SCORE2-LAC no está validado para diabetes, usar un score específico (ej. SCORE2-Diabetes)");
+      const risk = score2LacOf(d);
+      const read = `${LAC_REGION_LABEL[d.lacRegion]} — riesgo a 10 años de evento cardiovascular fatal y no fatal (Bijkerk et al., Eur Heart J 2026, SCORE2-LAC).${outOfRange.length ? " Atención: " + outOfRange.join("; ") + "." : ""}`;
+      return { value: risk.toFixed(1), unit: "%", read };
+    },
+  },
+  {
     id: "eoss",
     name: "EOSS",
     group: "Obesidad",
@@ -282,6 +340,7 @@ const FIELD_LABELS = {
   tiredness: "Cansancio diurno", observedApnea: "Apnea observada", neckLarge: "Cuello >40cm",
   eossRisk: "EOSS — factores de riesgo asociados", eossFunction: "EOSS — limitación funcional",
   eossPsych: "EOSS — síntomas psicológicos",
+  lacRegion: "País / región de riesgo (SCORE2-LAC)",
   anticoag: "Anticoagulación actual",
   menopausiaPrecoz: "Menopausia temprana/precoz", htaGestacional: "HTA gestacional",
   dbtGestacional: "DBT gestacional", bajoPesoNacer: "Hijos con bajo peso al nacer",
@@ -348,6 +407,22 @@ function SexSelect({ value, onChange }) {
       <option value="">—</option>
       <option value="M">M</option>
       <option value="F">F</option>
+    </select>
+  );
+}
+
+function CountrySelect({ value, onChange }) {
+  const countries = Object.keys(LAC_COUNTRY_REGION);
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value ? LAC_COUNTRY_REGION[e.target.value] : "")}
+      className="border rounded px-2 py-1.5 text-sm focus:outline-none focus:border-[#5B8DEF] focus:ring-1 focus:ring-[#5B8DEF]" style={{ background: '#1A1F29', borderColor: '#2A3140', color: '#E7EAF0' }}
+    >
+      <option value="">—</option>
+      {countries.map((c) => (
+        <option key={c} value={c}>{c} ({LAC_REGION_LABEL[LAC_COUNTRY_REGION[c]]})</option>
+      ))}
     </select>
   );
 }
@@ -1346,6 +1421,7 @@ function App() {
               <Field label="Antihipertensivo"><TriSelect value={data.onAntihtn || ""} onChange={set("onAntihtn")} /></Field>
               <Field label="Anticoagulación"><TriSelect value={data.anticoag || ""} onChange={set("anticoag")} /></Field>
               <Field label="TA sistólica"><NumInput value={data.sbp || ""} onChange={set("sbp")} /></Field>
+              <Field label="País / región (SCORE2-LAC)"><CountrySelect value={Object.keys(LAC_COUNTRY_REGION).find((c) => LAC_COUNTRY_REGION[c] === data.lacRegion) || ""} onChange={set("lacRegion")} /></Field>
             </Section>
 
             <Section title="Antecedentes gineco-obstétricos" defaultOpen={false}>
