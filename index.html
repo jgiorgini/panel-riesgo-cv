@@ -857,6 +857,24 @@ async function uploadMarkdownToDrive(token, filename, content) {
   return res.json();
 }
 
+async function fetchLatestFromDrive(token, code) {
+  const folderId = await ensureDriveFolder(token);
+  const q = encodeURIComponent(`'${folderId}' in parents and name contains '${code.trim()}_' and trashed=false`);
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=modifiedTime desc&fields=files(id,name,modifiedTime)`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const listData = await res.json();
+  if (!listData.files || listData.files.length === 0) {
+    throw new Error(`No hay ningún .md en Drive para el código "${code.trim()}".`);
+  }
+  const latest = listData.files[0];
+  const contentRes = await fetch(`https://www.googleapis.com/drive/v3/files/${latest.id}?alt=media`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const content = await contentRes.text();
+  return { filename: latest.name, content };
+}
+
 function App() {
   const [data, setData] = useState({});
   const [active, setActive] = useState(null);
@@ -882,6 +900,14 @@ function App() {
   const [importResult, setImportResult] = useState(null);
   const [importMode, setImportMode] = useState("hclab");
   const set = (k) => (v) => setData((d) => ({ ...d, [k]: v }));
+
+  const clearForm = () => {
+    setData({});
+    setCode("");
+    setImportResult(null);
+    setImportText("");
+    setStatus("Formulario limpio.");
+  };
 
   const runImport = () => {
     const r =
@@ -1083,9 +1109,40 @@ function App() {
             onClick={() => downloadMarkdown(code, data, evaluated)}
             className="text-xs px-3 py-1.5 rounded border"
             style={{ borderColor: '#2A3140', color: '#C7CDDB' }}
-            title="Descarga un .md con los scores actuales, para archivar donde quieras (ej. arrastrarlo a una carpeta de Drive)"
+            title="Genera y descarga un .md con los valores ACTUALES del formulario (no lo trae de Drive, aunque no hayas guardado)"
           >
-            Descargar .md
+            Descargar .md (actual)
+          </button>
+          <button
+            onClick={async () => {
+              if (!driveConnected || !driveAccessToken) { setStatus("Conectá Drive primero."); return; }
+              if (!code.trim()) { setStatus("Ingresá el código del paciente para buscarlo en Drive."); return; }
+              const win = window.open("", "_blank");
+              setStatus("Buscando en Drive…");
+              try {
+                const { filename, content } = await fetchLatestFromDrive(driveAccessToken, code);
+                const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+                const url = URL.createObjectURL(blob);
+                if (win) win.location.href = url;
+                setStatus(`Abierto en pestaña nueva: ${filename}`);
+              } catch (e) {
+                if (win) win.close();
+                setStatus(e.message || "No se pudo traer el archivo de Drive.");
+              }
+            }}
+            className="text-xs px-3 py-1.5 rounded border"
+            style={{ borderColor: '#2A3140', color: '#C7CDDB' }}
+            title="Busca en Drive el último .md guardado para este código y lo abre en una pestaña nueva, solo lectura"
+          >
+            Traer de Drive
+          </button>
+          <button
+            onClick={clearForm}
+            className="text-xs px-3 py-1.5 rounded border"
+            style={{ borderColor: '#D9714E', color: '#D9714E' }}
+            title="Limpia el formulario sin recargar la página — mantiene la conexión a Drive activa"
+          >
+            Limpiar formulario
           </button>
           {code.trim() && (
             <input
