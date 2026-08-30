@@ -895,6 +895,7 @@ function App() {
   const [showList, setShowList] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showCollision, setShowCollision] = useState(false);
+  const [driveView, setDriveView] = useState(null);
   const [collisionInfo, setCollisionInfo] = useState(null);
   const [importText, setImportText] = useState("");
   const [importResult, setImportResult] = useState(null);
@@ -1117,22 +1118,18 @@ function App() {
             onClick={async () => {
               if (!driveConnected || !driveAccessToken) { setStatus("Conectá Drive primero."); return; }
               if (!code.trim()) { setStatus("Ingresá el código del paciente para buscarlo en Drive."); return; }
-              const win = window.open("", "_blank");
               setStatus("Buscando en Drive…");
               try {
                 const { filename, content } = await fetchLatestFromDrive(driveAccessToken, code);
-                const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
-                const url = URL.createObjectURL(blob);
-                if (win) win.location.href = url;
-                setStatus(`Abierto en pestaña nueva: ${filename}`);
+                setDriveView({ filename, content });
+                setStatus(`Mostrando: ${filename}`);
               } catch (e) {
-                if (win) win.close();
                 setStatus(e.message || "No se pudo traer el archivo de Drive.");
               }
             }}
             className="text-xs px-3 py-1.5 rounded border"
             style={{ borderColor: '#2A3140', color: '#C7CDDB' }}
-            title="Busca en Drive el último .md guardado para este código y lo abre en una pestaña nueva, solo lectura"
+            title="Busca en Drive el último .md guardado para este código y lo muestra acá mismo, solo lectura"
           >
             Traer de Drive
           </button>
@@ -1183,6 +1180,18 @@ function App() {
                   Cancelar
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {driveView && (
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50" onClick={() => setDriveView(null)}>
+            <div className="border rounded-xl max-w-2xl w-full p-5 max-h-[80vh] flex flex-col" style={{ background: '#161B24', borderColor: '#2A3140' }} onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold" style={{ color: '#5FA35A' }}>{driveView.filename}</h3>
+                <button onClick={() => setDriveView(null)} className="text-sm" style={{ color: '#5B6478' }}>Cerrar</button>
+              </div>
+              <pre className="text-sm whitespace-pre-wrap overflow-y-auto font-mono" style={{ color: '#C7CDDB' }}>{driveView.content}</pre>
             </div>
           </div>
         )}
