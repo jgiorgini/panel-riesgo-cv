@@ -18,7 +18,7 @@
 </head>
 <body>
 <div id="root"></div>
-<script type="text/babel" data-presets="react">
+<script type="text/plain" id="app-source">
 const { useState, useMemo } = React;
 
 /* ---------- utilidades de cálculo ---------- */
@@ -1403,7 +1403,16 @@ function downloadMarkdown(code, data, evaluated) {
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(<App />);
-
+</script>
+<script>
+  const src = document.getElementById("app-source").textContent;
+  const { code } = Babel.transform(src, {
+    presets: [["react", { runtime: "classic" }]],
+    filename: "panel.jsx",
+  });
+  const s = document.createElement("script");
+  s.textContent = code;
+  document.body.appendChild(s);
 </script>
 </body>
 </html>
