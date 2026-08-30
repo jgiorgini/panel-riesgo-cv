@@ -1,4 +1,25 @@
-import React, { useState, useMemo } from "react";
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Panel de riesgo cardiometabólico</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  html, body { background:#0D1017; margin:0; padding:0; min-height:100vh; }
+  #root { min-height:100vh; }
+  ::-webkit-scrollbar { width:8px; height:8px; }
+  ::-webkit-scrollbar-thumb { background:#2A3140; border-radius:4px; }
+  ::-webkit-scrollbar-track { background:#0D1017; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useMemo } = React;
 
 /* ---------- utilidades de cálculo ---------- */
 
@@ -772,7 +793,7 @@ function importFromLabJson(raw) {
   return { ok: true, mapped, found, ignored, fecha: sample.fecha, count: samples.length };
 }
 
-export default function App() {
+function App() {
   const [data, setData] = useState({});
   const [active, setActive] = useState(null);
   const [code, setCode] = useState("");
@@ -834,7 +855,8 @@ export default function App() {
           .map((s) => ({ id: s.id, name: s.name, value: s.result.value, unit: s.result.unit, read: s.result.read })),
       };
       const r = await window.storage.set(`record:${code.trim()}`, JSON.stringify(record), false);
-      setStatus(r ? "Guardado." : "No se pudo guardar.");
+      downloadMarkdown(code, data, evaluated);
+      setStatus(r ? "Guardado y .md descargado." : "No se pudo guardar.");
       refreshList();
     } catch (e) {
       setStatus("Error al guardar.");
@@ -930,9 +952,12 @@ export default function App() {
 
       <div className="max-w-6xl mx-auto px-5 py-6">
         <div className="mb-6">
-          <div className="text-[10px] uppercase tracking-[0.2em] mb-1" style={{ color: '#5B6478' }}>Prototipo — datos de prueba, no persisten</div>
-          <h1 className="text-xl font-semibold" style={{ color: '#E7EAF0' }}>Panel de riesgo cardiometabólico</h1>
-          <p className="text-sm mt-1" style={{ color: '#8B93A7' }}>Cargá los datos disponibles. Cada score se activa solo cuando tiene todos los parámetros que necesita.</p>
+          <div className="text-[10px] uppercase tracking-[0.2em] mb-1 flex items-center gap-2" style={{ color: '#5B6478' }}>
+            <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: '#5FA35A' }} />
+            Datos guardados en este navegador — sin conexión a Claude ni a un servidor
+          </div>
+          <h1 className="text-2xl font-semibold tracking-tight" style={{ color: '#E7EAF0' }}>Panel de riesgo cardiometabólico</h1>
+          <p className="text-sm mt-1" style={{ color: '#8B93A7' }}>Cargá los datos disponibles. Cada score se activa solo cuando tiene todos los parámetros que necesita. Al guardar, se descarga además un <code className="font-mono text-xs px-1 rounded" style={{ background: '#1A1F29' }}>.md</code> para archivar donde quieras.</p>
         </div>
 
         {/* Barra de código / persistencia */}
@@ -959,6 +984,14 @@ export default function App() {
           </button>
           <button onClick={exportAll} className="text-xs px-3 py-1.5 rounded border" style={{ borderColor: '#2A3140', color: '#C7CDDB' }}>
             Exportar todo (JSON)
+          </button>
+          <button
+            onClick={() => downloadMarkdown(code, data, evaluated)}
+            className="text-xs px-3 py-1.5 rounded border"
+            style={{ borderColor: '#2A3140', color: '#C7CDDB' }}
+            title="Descarga un .md con los scores actuales, para archivar donde quieras (ej. arrastrarlo a una carpeta de Drive)"
+          >
+            Descargar .md
           </button>
           {code.trim() && (
             <input
@@ -1310,3 +1343,67 @@ export default function App() {
     </div>
   );
 }
+
+/* ---------- shim de almacenamiento: localStorage en vez de la persistencia de artifacts ---------- */
+window.storage = {
+  _key: (k) => `panelrcv::${k}`,
+  async get(key) {
+    const raw = localStorage.getItem(this._key(key));
+    if (raw === null) throw new Error("not found");
+    return { key, value: raw, shared: false };
+  },
+  async set(key, value) {
+    localStorage.setItem(this._key(key), value);
+    return { key, value, shared: false };
+  },
+  async delete(key) {
+    localStorage.removeItem(this._key(key));
+    return { key, deleted: true, shared: false };
+  },
+  async list(prefix) {
+    const out = [];
+    const p = this._key(prefix || "");
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(p)) out.push(k.replace("panelrcv::", ""));
+    }
+    return { keys: out, prefix, shared: false };
+  },
+};
+
+/* ---------- exportación a Markdown (para archivar en Drive u otro lado) ---------- */
+function buildMarkdown(code, data, evaluated) {
+  const fecha = new Date().toLocaleDateString("es-AR");
+  const done = evaluated.filter((s) => s.complete);
+  let md = `# Riesgo cardiometabólico — ${code || "s/código"}\n\n`;
+  md += `Fecha de carga: ${fecha}\n\n`;
+  md += `## Scores calculados\n\n`;
+  if (done.length === 0) {
+    md += "_Sin scores completos todavía._\n";
+  } else {
+    for (const s of done) {
+      md += `**${s.name}** (${s.group}): ${s.result.value}${s.result.unit ? " " + s.result.unit : ""}\n`;
+      md += `${s.result.read}\n\n`;
+    }
+  }
+  return md;
+}
+
+function downloadMarkdown(code, data, evaluated) {
+  const md = buildMarkdown(code, data, evaluated);
+  const blob = new Blob([md], { type: "text/markdown" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  const fecha = new Date().toISOString().slice(0, 10);
+  a.download = `${(code || "sin-codigo").trim()}_riesgo-cardiometabolico_${fecha}.md`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+
+</script>
+</body>
+</html>
