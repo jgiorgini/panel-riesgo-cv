@@ -416,7 +416,7 @@ function CountrySelect({ value, onChange }) {
   return (
     <select
       value={value}
-      onChange={(e) => onChange(e.target.value ? LAC_COUNTRY_REGION[e.target.value] : "")}
+      onChange={(e) => onChange(e.target.value)}
       className="border rounded px-2 py-1.5 text-sm focus:outline-none focus:border-[#5B8DEF] focus:ring-1 focus:ring-[#5B8DEF]" style={{ background: '#1A1F29', borderColor: '#2A3140', color: '#E7EAF0' }}
     >
       <option value="">—</option>
@@ -961,7 +961,7 @@ async function fetchLatestFromDrive(token, code) {
 }
 
 function App() {
-  const [data, setData] = useState({});
+  const [data, setData] = useState({ lacCountry: "Argentina", lacRegion: "high" });
   const [active, setActive] = useState(null);
   const [code, setCode] = useState("");
   const [savedCodes, setSavedCodes] = useState([]);
@@ -989,7 +989,7 @@ function App() {
   const set = (k) => (v) => setData((d) => ({ ...d, [k]: v }));
 
   const clearForm = () => {
-    setData({});
+    setData({ lacCountry: "Argentina", lacRegion: "high" });
     setCode("");
     setImportResult(null);
     setImportText("");
@@ -1465,7 +1465,7 @@ function App() {
               <Field label="Antihipertensivo"><TriSelect value={data.onAntihtn || ""} onChange={set("onAntihtn")} /></Field>
               <Field label="Anticoagulación"><TriSelect value={data.anticoag || ""} onChange={set("anticoag")} /></Field>
               <Field label="TA sistólica"><NumInput value={data.sbp || ""} onChange={set("sbp")} /></Field>
-              <Field label="País / región (SCORE2-LAC)"><CountrySelect value={Object.keys(LAC_COUNTRY_REGION).find((c) => LAC_COUNTRY_REGION[c] === data.lacRegion) || ""} onChange={set("lacRegion")} /></Field>
+              <Field label="País / región (SCORE2-LAC)"><CountrySelect value={data.lacCountry || ""} onChange={(c) => setData((d) => ({ ...d, lacCountry: c, lacRegion: c ? LAC_COUNTRY_REGION[c] : "" }))} /></Field>
             </Section>
 
             <Section title="Antecedentes gineco-obstétricos" defaultOpen={false}>
