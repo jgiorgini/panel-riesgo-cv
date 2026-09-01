@@ -470,13 +470,13 @@ const LAB_KEY_MAP = {
 };
 
 const HCLAB_ALIASES = {
-  ast: ["GOT", "TGO", "AST"],
-  alt: ["GPT", "TGP", "ALT"],
+  ast: ["GOT", "TGO", "AST", "ASAT"],
+  alt: ["GPT", "TGP", "ALT", "ALAT"],
   platelets: ["PLAQ", "PLQ", "PLT"],
   creatinine: ["CR", "CREA", "CREAT"],
   tgs: ["TG", "TRIG"],
   glucose: ["GLU", "GLUC", "GLICEMIA", "GLUCEMIA"],
-  totalChol: ["COL", "COLT", "COLESTEROL"],
+  totalChol: ["COL", "COLT", "COLESTEROL", "CT"],
   hdl: ["HDL"],
 };
 
@@ -569,6 +569,7 @@ const CAMPO_MAP = {
   PESO: { field: "weight", type: "number" },
   TALLA: { field: "height", type: "number" },
   CINTURA: { field: "waist", type: "number" },
+  UACR: { field: "uacr", type: "number" },
   MENOPAUSIA_PRECOZ: { field: "menopausiaPrecoz", type: "bool" },
   HTA_GESTACIONAL: { field: "htaGestacional", type: "bool" },
   DBT_GESTACIONAL: { field: "dbtGestacional", type: "bool" },
@@ -708,6 +709,14 @@ function parseHcopText(text) {
   if (tallaMatch) { mapped.height = parseFloat(tallaMatch[1].replace(",", ".")); evidence.push({ field: "height", label: "Talla", snippet: tallaMatch[0] }); }
   const cinturaMatch = text.match(/cintura[:\s]+(\d+(?:[.,]\d+)?)\s*cm/i);
   if (cinturaMatch) { mapped.waist = parseFloat(cinturaMatch[1].replace(",", ".")); evidence.push({ field: "waist", label: "Cintura", snippet: cinturaMatch[0] }); }
+
+  const uacrRe = /(?:[ií]ndice\s+alb[uú]mina[\/\s]creatinina|\bUACR\b|\bRAC\b|micro\s?alb(?:uminuria)?)\D{0,15}?(\d+(?:[.,]\d+)?)/gi;
+  const uacrMatches = [...text.matchAll(uacrRe)];
+  if (uacrMatches.length) {
+    const last = uacrMatches[uacrMatches.length - 1];
+    mapped.uacr = parseFloat(last[1].replace(",", "."));
+    evidence.push({ field: "uacr", label: FIELD_LABELS.uacr, snippet: uacrMatches.length > 1 ? `${last[0]} (última de ${uacrMatches.length} menciones)` : last[0] });
+  }
 
   const eossMention = /\bEOSS\b/i.test(text);
 
