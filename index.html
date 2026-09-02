@@ -1226,7 +1226,15 @@ function App() {
   const copyHcopScoreLine = async () => {
     const line = buildHcopScoreLine(evaluated);
     if (!line) {
-      setStatus("Ningún score cardiovascular está completo todavía (SCORE2-LAC / PREVENT).");
+      const byId = Object.fromEntries(evaluated.map((s) => [s.id, s]));
+      const why = (id, name) => {
+        const s = byId[id];
+        if (!s) return null;
+        if (!s.complete) return `${name}: falta ${s.missing.map((f) => FIELD_LABELS[f] || f).join(", ")}`;
+        return `${name}: ${s.result.read}`;
+      };
+      const reasons = [why("score2lac", "SCORE2-LAC"), why("prevent", "PREVENT")].filter(Boolean);
+      setStatus(reasons.length ? reasons.join(" · ") : "Ningún score cardiovascular está completo todavía.");
       return;
     }
     try {
@@ -1796,14 +1804,16 @@ window.storage = {
 /* ---------- exportación a Markdown (para archivar en Drive u otro lado) ---------- */
 /* Línea de encabezado para pegar en el HCOP, formato — SCORE2-LAC: XX% — PREVENT: XX% —
    (mismo patrón que ya usás para Lp(a)). Toma SCORE2-LAC y PREVENT base; si alguno no
-   está completo, se omite ese tramo. Si ninguno está completo, devuelve null. */
+   está completo, o está completo pero el resultado no es un número calculable (fuera de
+   rango validado del modelo, o error), se omite ese tramo. Si ninguno queda, null. */
 function buildHcopScoreLine(evaluated) {
   const byId = Object.fromEntries(evaluated.map((s) => [s.id, s]));
+  const isNumeric = (s) => s && s.complete && s.result && s.result.value !== "—" && s.result.value !== "err" && !isNaN(parseFloat(s.result.value));
   const parts = [];
   const s2 = byId["score2lac"];
-  if (s2 && s2.complete) parts.push(`SCORE2-LAC: ${s2.result.value}%`);
+  if (isNumeric(s2)) parts.push(`SCORE2-LAC: ${s2.result.value}%`);
   const pv = byId["prevent"];
-  if (pv && pv.complete) parts.push(`PREVENT: ${pv.result.value}% (CVD 10a)`);
+  if (isNumeric(pv)) parts.push(`PREVENT: ${pv.result.value}% (CVD 10a)`);
   if (parts.length === 0) return null;
   return `— ${parts.join(" — ")} —`;
 }
