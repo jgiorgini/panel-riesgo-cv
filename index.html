@@ -252,6 +252,20 @@ const SCORES = [
     },
   },
   {
+    id: "prevent_hba1c",
+    name: "AHA PREVENT +HbA1c",
+    group: "Cardio",
+    required: ["age", "sex", "sbp", "totalChol", "hdl", "smoker", "dm", "onAntihtn", "onStatin", "creatinine", "weight", "height", "hba1c"],
+    calc: (d) => preventVariantCalc(d, "hba1cValid", PREVENT_COEF.y10hba1c, PREVENT_COEF.y10hba1chf, PREVENT_COEF.y30hba1c, PREVENT_COEF.y30hba1chf, "HbA1c"),
+  },
+  {
+    id: "prevent_uacr",
+    name: "AHA PREVENT +UACR",
+    group: "Cardio",
+    required: ["age", "sex", "sbp", "totalChol", "hdl", "smoker", "dm", "onAntihtn", "onStatin", "creatinine", "weight", "height", "uacr"],
+    calc: (d) => preventVariantCalc(d, "uacrValid", PREVENT_COEF.y10uacr, PREVENT_COEF.y10uacrhf, PREVENT_COEF.y30uacr, PREVENT_COEF.y30uacrhf, "UACR"),
+  },
+  {
     id: "score2lac",
     name: "SCORE2-LAC",
     group: "Cardio",
@@ -332,7 +346,7 @@ const SCORES = [
 const FIELD_LABELS = {
   age: "Edad", sex: "Sexo", ast: "AST/GOT", alt: "ALT/GPT", platelets: "Plaquetas",
   creatinine: "Creatinina", tgs: "Triglicéridos", glucose: "Glucemia", totalChol: "Col. total",
-  hdl: "HDL", uacr: "UACR (albúmina/creatinina en orina)", htn: "HTA", dm: "Diabetes",
+  hdl: "HDL", uacr: "UACR (albúmina/creatinina en orina)", hba1c: "HbA1c", htn: "HTA", dm: "Diabetes",
   disglucemia: "Disglucemia (prediabetes)",
   stroke: "ACV/AIT previo", vascular: "Enf. vascular", chf: "Insuf. cardíaca", sbp: "TA sistólica",
   smoker: "Tabaquismo", onStatin: "Estatina actual", onAntihtn: "Antihipertensivo actual",
@@ -390,7 +404,7 @@ function TriSelect({ value, onChange }) {
       onChange={(e) => onChange(e.target.value)}
       className="border rounded px-2 py-1.5 text-sm focus:outline-none focus:border-[#5B8DEF] focus:ring-1 focus:ring-[#5B8DEF]" style={{ background: '#1A1F29', borderColor: '#2A3140', color: '#E7EAF0' }}
     >
-      <option value="">—</option>
+      <option value="">No consignado</option>
       <option value="si">Sí</option>
       <option value="no">No</option>
     </select>
@@ -478,6 +492,7 @@ const HCLAB_ALIASES = {
   glucose: ["GLU", "GLUC", "GLICEMIA", "GLUCEMIA"],
   totalChol: ["COL", "COLT", "COLESTEROL", "CT"],
   hdl: ["HDL"],
+  hba1c: ["HBA1C", "A1C"],
 };
 
 /* ---------- Extractor de texto HCOP (palabras clave + evidencia) ---------- */
@@ -570,6 +585,7 @@ const CAMPO_MAP = {
   TALLA: { field: "height", type: "number" },
   CINTURA: { field: "waist", type: "number" },
   UACR: { field: "uacr", type: "number" },
+  HBA1C: { field: "hba1c", type: "number" },
   MENOPAUSIA_PRECOZ: { field: "menopausiaPrecoz", type: "bool" },
   HTA_GESTACIONAL: { field: "htaGestacional", type: "bool" },
   DBT_GESTACIONAL: { field: "dbtGestacional", type: "bool" },
@@ -589,7 +605,19 @@ function parseCampoValorBlock(text) {
     const rawVal = m[2].trim();
     const def = CAMPO_MAP[key];
     if (!def) continue; // campo no reconocido: se ignora, no se intenta adivinar
-    if (rawVal === "?") continue; // no dictado: no se setea nada
+
+    if (rawVal === "?") {
+      // No dictado explícitamente. Para booleanos esto debe *pisar* cualquier falso
+      // positivo del heurístico sobre el mismo texto pegado (ej. "TABAQUISMO=?" contiene
+      // la palabra "tabaquismo" y el heurístico la matchea como "si" si no se anula acá).
+      // Se registra como "" (no consignado): hasVal("") = false, así que ningún score lo
+      // toma como dato disponible, pero sí gana sobre el heurístico al mergear.
+      if (def.type === "bool") {
+        mapped[def.field] = "";
+        evidence.push({ field: def.field, label: FIELD_LABELS[def.field] || def.field, snippet: `${key}=?`, literal: true, notConsigned: true });
+      }
+      continue;
+    }
 
     if (def.type === "bool") {
       const up = rawVal.toUpperCase();
@@ -779,6 +807,51 @@ const PREVENT_COEF = {
     hf_0: { age: 0.5681541, age2: -0.1048388, sbp_1: -0.4761564, sbp_2: 0.3032400, dm: 0.6840338, smoke: 0.2656273, bmi_1: 0.0833107, bmi_2: 0.2699900, egfr_1: 0.2541805, egfr_2: 0.0638923, bptreat: 0.2583631, bptreat_x: -0.0391938, age_sbp2: -0.1269124, age_dm: -0.3273572, age_smoke: -0.2043019, age_bmi2: -0.0182831, age_egfr1: -0.1342618, const: -1.9575100 },
     hf_1: { age: 0.6254374, age2: -0.0983038, sbp_1: -0.3919241, sbp_2: 0.3142295, dm: 0.8330787, smoke: 0.3438651, bmi_1: 0.0594874, bmi_2: 0.2525536, egfr_1: 0.2981642, egfr_2: 0.0667159, bptreat: 0.3339210, bptreat_x: -0.0893177, age_sbp2: -0.0974299, age_dm: -0.4048550, age_smoke: -0.1982991, age_bmi2: -0.0035619, age_egfr1: -0.1564215, const: -2.2053790 },
   },
+  /* Variantes con predictores opcionales (HbA1c, UACR). Coeficientes extraídos y
+     verificados contra R/sysdata.rda del paquete preventr (martingmayer/preventr,
+     CRAN — implementación de referencia de Khan SS et al., Circulation 2024;149:430-449).
+     No se implementa la variante SDI (social deprivation index, por código postal EE.UU.,
+     no aplicable a pacientes argentinos) ni el modelo "full" (que la combina con las 3). */
+  y10hba1c: {
+    cvd_0: { age: 0.7699177, nhdl: 0.0605093, hdl: -0.0888525, sbp_1: -0.4177130, sbp_2: 0.3288657, dm: 0.4759471, smoke: 0.4385663, bmi_1: 0.0000000, bmi_2: 0.0000000, egfr_1: 0.5334616, egfr_2: 0.0206431, bptreat: 0.2917524, statin: -0.1383313, bptreat_x: -0.0482622, statin_x: 0.1393796, age_nhdl: -0.0463501, age_hdl: 0.0205926, age_sbp2: -0.1037717, age_dm: -0.1737697, age_smoke: -0.0915839, age_bmi2: 0.0000000, age_egfr1: -0.1637039, hba1c_dm: 0.1315900, hba1c_nodm: 0.1295185, hba1c_miss: -0.0128373, const: -3.0409010 },
+    cvd_1: { age: 0.7858178, nhdl: 0.0194438, hdl: -0.1521964, sbp_1: -0.2296681, sbp_2: 0.3465777, dm: 0.5366241, smoke: 0.5411682, bmi_1: 0.0000000, bmi_2: 0.0000000, egfr_1: 0.5931898, egfr_2: 0.0472458, bptreat: 0.3158567, statin: -0.1535174, bptreat_x: -0.0687752, statin_x: 0.1054746, age_nhdl: -0.0761119, age_hdl: 0.0307469, age_sbp2: -0.0905966, age_dm: -0.2241857, age_smoke: -0.0801860, age_bmi2: 0.0000000, age_egfr1: -0.1667286, hba1c_dm: 0.1338348, hba1c_nodm: 0.1622409, hba1c_miss: -0.0142496, const: -3.3061620 },
+    ascvd_0: { age: 0.7064146, nhdl: 0.1532267, hdl: -0.1082166, sbp_1: -0.2675288, sbp_2: 0.3173809, dm: 0.4326040, smoke: 0.3958842, bmi_1: 0.0000000, bmi_2: 0.0000000, egfr_1: 0.3665014, egfr_2: 0.0250243, bptreat: 0.2061158, statin: -0.0899988, bptreat_x: -0.0334959, statin_x: 0.1034168, age_nhdl: -0.0255406, age_hdl: 0.0247538, age_sbp2: -0.0917441, age_dm: -0.1499195, age_smoke: -0.0980890, age_bmi2: 0.0000000, age_egfr1: -0.1305231, hba1c_dm: 0.1157161, hba1c_nodm: 0.1288303, hba1c_miss: -0.0010001, const: -3.5183500 },
+    ascvd_1: { age: 0.7111831, nhdl: 0.1067970, hdl: -0.1425745, sbp_1: -0.0736824, sbp_2: 0.3480844, dm: 0.5112951, smoke: 0.4880292, bmi_1: 0.0000000, bmi_2: 0.0000000, egfr_1: 0.4754997, egfr_2: 0.0438132, bptreat: 0.2259093, statin: -0.0648872, bptreat_x: -0.0437645, statin_x: 0.0697082, age_nhdl: -0.0506382, age_hdl: 0.0327475, age_sbp2: -0.0996442, age_dm: -0.1924338, age_smoke: -0.0803539, age_bmi2: 0.0000000, age_egfr1: -0.1682586, hba1c_dm: 0.1339055, hba1c_nodm: 0.1596461, hba1c_miss: 0.0015678, const: -3.8387460 },
+  },
+  y10hba1chf: {
+    hf_0: { age: 0.9117870, nhdl: 0.0000000, hdl: 0.0000000, sbp_1: -0.6568071, sbp_2: 0.3524645, dm: 0.5849752, smoke: 0.5014014, bmi_1: -0.0512352, bmi_2: 0.3652940, egfr_1: 0.6892219, egfr_2: 0.0292377, bptreat: 0.3038296, statin: 0.0000000, bptreat_x: -0.0515032, statin_x: 0.0000000, age_nhdl: 0.0000000, age_hdl: 0.0000000, age_sbp2: -0.1262343, age_dm: -0.2449514, age_smoke: -0.1392217, age_bmi2: 0.0009592, age_egfr1: -0.1917105, hba1c_dm: 0.1652857, hba1c_nodm: 0.1505859, hba1c_miss: -0.0113444, const: -3.9619540 },
+    hf_1: { age: 0.8997391, nhdl: 0.0000000, hdl: 0.0000000, sbp_1: -0.4422749, sbp_2: 0.3378691, dm: 0.6812840, smoke: 0.5886005, bmi_1: -0.0148657, bmi_2: 0.2958374, egfr_1: 0.7344700, egfr_2: 0.0592600, bptreat: 0.3543475, statin: 0.0000000, bptreat_x: -0.1002139, statin_x: 0.0000000, age_nhdl: 0.0000000, age_hdl: 0.0000000, age_sbp2: -0.0878765, age_dm: -0.3036840, age_smoke: -0.1178943, age_bmi2: -0.0083450, age_egfr1: -0.1912183, hba1c_dm: 0.1856442, hba1c_nodm: 0.1833083, hba1c_miss: -0.0143112, const: -4.2882250 },
+  },
+  y30hba1c: {
+    cvd_0: { age: 0.4519873, age2: -0.1016240, nhdl: 0.0700456, hdl: -0.0968005, sbp_1: -0.1923527, sbp_2: 0.2827043, dm: 0.3417152, smoke: 0.2105272, bmi_1: 0.0000000, bmi_2: 0.0000000, egfr_1: 0.1113291, egfr_2: 0.0640135, bptreat: 0.2334248, statin: -0.0299421, bptreat_x: -0.0393204, statin_x: 0.1228854, age_nhdl: -0.0463737, age_hdl: 0.0184599, age_sbp2: -0.1085744, age_dm: -0.2208049, age_smoke: -0.1577978, age_bmi2: 0.0000000, age_egfr1: -0.1179375, hba1c_dm: 0.0768169, hba1c_nodm: 0.0777295, hba1c_miss: 0.0092204, const: -1.1807670 },
+    cvd_1: { age: 0.5343493, age2: -0.0952314, nhdl: 0.0298124, hdl: -0.1578451, sbp_1: -0.1504488, sbp_2: 0.3173368, dm: 0.4314738, smoke: 0.3209399, bmi_1: 0.0000000, bmi_2: 0.0000000, egfr_1: 0.1771435, egfr_2: 0.0582828, bptreat: 0.2888947, statin: -0.0795886, bptreat_x: -0.0600438, statin_x: 0.0920598, age_nhdl: -0.0696108, age_hdl: 0.0308807, age_sbp2: -0.0954051, age_dm: -0.2763408, age_smoke: -0.1623944, age_bmi2: 0.0000000, age_egfr1: -0.1430514, hba1c_dm: 0.0940543, hba1c_nodm: 0.1116486, hba1c_miss: -0.0024798, const: -1.3410590 },
+    ascvd_0: { age: 0.3883267, age2: -0.0958114, nhdl: 0.1613374, hdl: -0.1144418, sbp_1: -0.0474338, sbp_2: 0.2691281, dm: 0.2859773, smoke: 0.1759553, bmi_1: 0.0000000, bmi_2: 0.0000000, egfr_1: -0.0242898, egfr_2: 0.0644523, bptreat: 0.1428740, statin: 0.0115062, bptreat_x: -0.0233300, statin_x: 0.0899664, age_nhdl: -0.0275478, age_hdl: 0.0225730, age_sbp2: -0.0908020, age_dm: -0.1771894, age_smoke: -0.1548847, age_bmi2: 0.0000000, age_egfr1: -0.0732754, hba1c_dm: 0.0591089, hba1c_nodm: 0.0821158, hba1c_miss: 0.0179755, const: -1.7777080 },
+    ascvd_1: { age: 0.4555574, age2: -0.0903501, nhdl: 0.1148321, hdl: -0.1458754, sbp_1: 0.0089323, sbp_2: 0.3139029, dm: 0.3862810, smoke: 0.2714309, bmi_1: 0.0000000, bmi_2: 0.0000000, egfr_1: 0.0930987, egfr_2: 0.0532216, bptreat: 0.1862181, statin: 0.0106964, bptreat_x: -0.0329713, statin_x: 0.0583609, age_nhdl: -0.0463273, age_hdl: 0.0324717, age_sbp2: -0.1004777, age_dm: -0.2266944, age_smoke: -0.1541859, age_bmi2: 0.0000000, age_egfr1: -0.1286005, hba1c_dm: 0.0875827, hba1c_nodm: 0.1126417, hba1c_miss: 0.0124356, const: -2.0115330 },
+  },
+  y30hba1chf: {
+    hf_0: { age: 0.5703729, age2: -0.1084544, nhdl: 0.0000000, hdl: 0.0000000, sbp_1: -0.4471767, sbp_2: 0.2910152, dm: 0.4507242, smoke: 0.2595850, bmi_1: 0.0850676, bmi_2: 0.2637222, egfr_1: 0.2454706, egfr_2: 0.0675649, bptreat: 0.2611991, statin: 0.0000000, bptreat_x: -0.0408908, statin_x: 0.0000000, age_nhdl: 0.0000000, age_hdl: 0.0000000, age_sbp2: -0.1241051, age_dm: -0.2849461, age_smoke: -0.2032308, age_bmi2: -0.0239714, age_egfr1: -0.1383010, hba1c_dm: 0.1101184, hba1c_nodm: 0.0949198, hba1c_miss: 0.0084192, const: -1.9749990 },
+    hf_1: { age: 0.6210856, age2: -0.1000972, nhdl: 0.0000000, hdl: 0.0000000, sbp_1: -0.3773697, sbp_2: 0.2953160, dm: 0.5681692, smoke: 0.3449139, bmi_1: 0.0540094, bmi_2: 0.2497670, egfr_1: 0.2875781, egfr_2: 0.0692013, bptreat: 0.3334936, statin: 0.0000000, bptreat_x: -0.0922339, statin_x: 0.0000000, age_nhdl: 0.0000000, age_hdl: 0.0000000, age_sbp2: -0.0907885, age_dm: -0.3554646, age_smoke: -0.2008846, age_bmi2: -0.0079611, age_egfr1: -0.1568030, hba1c_dm: 0.1448336, hba1c_nodm: 0.1277838, hba1c_miss: -0.0022589, const: -2.1935530 },
+  },
+  y10uacr: {
+    cvd_0: { age: 0.7768655, nhdl: 0.0659949, hdl: -0.0951111, sbp_1: -0.4206670, sbp_2: 0.3120151, dm: 0.6985210, smoke: 0.4314669, bmi_1: 0.0000000, bmi_2: 0.0000000, egfr_1: 0.3841364, egfr_2: 0.0093840, bptreat: 0.2676494, statin: -0.1390966, bptreat_x: -0.0579315, statin_x: 0.1383719, age_nhdl: -0.0488332, age_hdl: 0.0200406, age_sbp2: -0.1024540, age_dm: -0.2236355, age_smoke: -0.0894850, age_bmi2: 0.0000000, age_egfr1: -0.1321848, uacr_ln: 0.1887974, uacr_miss: 0.0916979, const: -3.5107050 },
+    cvd_1: { age: 0.7969249, nhdl: 0.0256635, hdl: -0.1588107, sbp_1: -0.2255701, sbp_2: 0.3396649, dm: 0.8047515, smoke: 0.5285338, bmi_1: 0.0000000, bmi_2: 0.0000000, egfr_1: 0.4803511, egfr_2: 0.0434472, bptreat: 0.2985207, statin: -0.1497787, bptreat_x: -0.0742889, statin_x: 0.1067560, age_nhdl: -0.0778126, age_hdl: 0.0306768, age_sbp2: -0.0907168, age_dm: -0.2705122, age_smoke: -0.0830564, age_bmi2: 0.0000000, age_egfr1: -0.1389249, uacr_ln: 0.1793037, uacr_miss: 0.0132073, const: -3.7383410 },
+    ascvd_0: { age: 0.7141718, nhdl: 0.1602194, hdl: -0.1139086, sbp_1: -0.2719456, sbp_2: 0.3058719, dm: 0.6600631, smoke: 0.3884022, bmi_1: 0.0000000, bmi_2: 0.0000000, egfr_1: 0.2466316, egfr_2: 0.0151852, bptreat: 0.1861670, statin: -0.0894395, bptreat_x: -0.0411884, statin_x: 0.1058212, age_nhdl: -0.0280890, age_hdl: 0.0240427, age_sbp2: -0.0912325, age_dm: -0.2004894, age_smoke: -0.0969360, age_bmi2: 0.0000000, age_egfr1: -0.1022867, uacr_ln: 0.1510073, uacr_miss: 0.0556000, const: -3.8514600 },
+    ascvd_1: { age: 0.7201999, nhdl: 0.1135771, hdl: -0.1493506, sbp_1: -0.0726677, sbp_2: 0.3436259, dm: 0.7773094, smoke: 0.4746662, bmi_1: 0.0000000, bmi_2: 0.0000000, egfr_1: 0.3824646, egfr_2: 0.0394178, bptreat: 0.2125182, statin: -0.0603046, bptreat_x: -0.0466053, statin_x: 0.0733118, age_nhdl: -0.0534262, age_hdl: 0.0325689, age_sbp2: -0.0999887, age_dm: -0.2411762, age_smoke: -0.0826941, age_bmi2: 0.0000000, age_egfr1: -0.1444737, uacr_ln: 0.1501217, uacr_miss: 0.0050257, const: -4.1746140 },
+  },
+  y10uacrhf: {
+    hf_0: { age: 0.9111795, nhdl: 0.0000000, hdl: 0.0000000, sbp_1: -0.6693649, sbp_2: 0.3290082, dm: 0.8377655, smoke: 0.4978917, bmi_1: -0.0427490, bmi_2: 0.3624165, egfr_1: 0.5075796, egfr_2: 0.0137716, bptreat: 0.2739963, statin: 0.0000000, bptreat_x: -0.0645712, statin_x: 0.0000000, age_nhdl: 0.0000000, age_hdl: 0.0000000, age_sbp2: -0.1230039, age_dm: -0.3013297, age_smoke: -0.1410318, age_bmi2: 0.0021531, age_egfr1: -0.1548018, uacr_ln: 0.2306299, uacr_miss: 0.1472194, const: -4.5569070 },
+    hf_1: { age: 0.9145975, nhdl: 0.0000000, hdl: 0.0000000, sbp_1: -0.4441346, sbp_2: 0.3260323, dm: 0.9611365, smoke: 0.5755787, bmi_1: 0.0008831, bmi_2: 0.2988964, egfr_1: 0.5915291, egfr_2: 0.0556823, bptreat: 0.3314097, statin: 0.0000000, bptreat_x: -0.1078596, statin_x: 0.0000000, age_nhdl: 0.0000000, age_hdl: 0.0000000, age_sbp2: -0.0875231, age_dm: -0.3568590, age_smoke: -0.1220248, age_bmi2: -0.0053637, age_egfr1: -0.1610389, uacr_ln: 0.2197281, uacr_miss: 0.0326667, const: -4.8415060 },
+  },
+  y30uacr: {
+    cvd_0: { age: 0.4644910, age2: -0.0998895, nhdl: 0.0757606, hdl: -0.1031778, sbp_1: -0.1990714, sbp_2: 0.2715816, dm: 0.4754637, smoke: 0.2069672, bmi_1: 0.0000000, bmi_2: 0.0000000, egfr_1: 0.0331103, egfr_2: 0.0540474, bptreat: 0.2189911, statin: -0.0331044, bptreat_x: -0.0453400, statin_x: 0.1214535, age_nhdl: -0.0483995, age_hdl: 0.0178997, age_sbp2: -0.1059324, age_dm: -0.2492861, age_smoke: -0.1561543, age_bmi2: 0.0000000, age_egfr1: -0.1012429, uacr_ln: 0.1007571, uacr_miss: 0.0572456, const: -1.3987270 },
+    cvd_1: { age: 0.5491768, age2: -0.0937311, nhdl: 0.0359847, hdl: -0.1642965, sbp_1: -0.1483404, sbp_2: 0.3133530, dm: 0.6253766, smoke: 0.3147172, bmi_1: 0.0000000, bmi_2: 0.0000000, egfr_1: 0.1094663, egfr_2: 0.0550705, bptreat: 0.2782433, statin: -0.0786239, bptreat_x: -0.0628947, statin_x: 0.0932040, age_nhdl: -0.0710685, age_hdl: 0.0306363, age_sbp2: -0.0951455, age_dm: -0.3168231, age_smoke: -0.1636391, age_bmi2: 0.0000000, age_egfr1: -0.1265483, uacr_ln: 0.1142251, uacr_miss: -0.0055863, const: -1.5837380 },
+    ascvd_0: { age: 0.3995607, age2: -0.0945570, nhdl: 0.1686692, hdl: -0.1202145, sbp_1: -0.0555561, sbp_2: 0.2633566, dm: 0.4362036, smoke: 0.1716233, bmi_1: 0.0000000, bmi_2: 0.0000000, egfr_1: -0.0775282, egfr_2: 0.0561236, bptreat: 0.1319331, statin: 0.0102428, bptreat_x: -0.0269294, statin_x: 0.0920557, age_nhdl: -0.0297021, age_hdl: 0.0217935, age_sbp2: -0.0893347, age_dm: -0.2081467, age_smoke: -0.1542716, age_bmi2: 0.0000000, age_egfr1: -0.0597254, uacr_ln: 0.0684872, uacr_miss: 0.0193962, const: -1.8734490 },
+    ascvd_1: { age: 0.4629669, age2: -0.0902777, nhdl: 0.1215214, hdl: -0.1522069, sbp_1: 0.0092679, sbp_2: 0.3113609, dm: 0.5812560, smoke: 0.2631670, bmi_1: 0.0000000, bmi_2: 0.0000000, egfr_1: 0.0391726, egfr_2: 0.0492959, bptreat: 0.1786178, statin: 0.0131058, bptreat_x: -0.0325135, statin_x: 0.0617093, age_nhdl: -0.0489189, age_hdl: 0.0321079, age_sbp2: -0.1003185, age_dm: -0.2684574, age_smoke: -0.1547301, age_bmi2: 0.0000000, age_egfr1: -0.1130703, uacr_ln: 0.0903471, uacr_miss: -0.0145818, const: -2.1788880 },
+  },
+  y30uacrhf: {
+    hf_0: { age: 0.5750236, age2: -0.1062268, nhdl: 0.0000000, hdl: 0.0000000, sbp_1: -0.4633994, sbp_2: 0.2742874, dm: 0.6122080, smoke: 0.2614987, bmi_1: 0.0895459, bmi_2: 0.2632424, egfr_1: 0.1430472, egfr_2: 0.0535184, bptreat: 0.2417468, statin: 0.0000000, bptreat_x: -0.0498574, statin_x: 0.0000000, age_nhdl: 0.0000000, age_hdl: 0.0000000, age_sbp2: -0.1193827, age_dm: -0.3166510, age_smoke: -0.2046122, age_bmi2: -0.0216878, age_egfr1: -0.1165637, uacr_ln: 0.1366452, uacr_miss: 0.1078355, const: -2.3148720 },
+    hf_1: { age: 0.6319513, age2: -0.1009284, nhdl: 0.0000000, hdl: 0.0000000, sbp_1: -0.3787175, sbp_2: 0.2863393, dm: 0.7631221, smoke: 0.3355843, bmi_1: 0.0677084, bmi_2: 0.2517238, egfr_1: 0.1940067, egfr_2: 0.0664006, bptreat: 0.3171436, statin: 0.0000000, bptreat_x: -0.0970661, statin_x: 0.0000000, age_nhdl: 0.0000000, age_hdl: 0.0000000, age_sbp2: -0.0896239, age_dm: -0.4007430, age_smoke: -0.2042041, age_bmi2: -0.0054699, age_egfr1: -0.1360200, uacr_ln: 0.1486028, uacr_miss: 0.0116080, const: -2.5389520 },
+  },
 };
 
 /* eGFR sin creatinina disponible en el modelo PREVENT: se usa el eGFR CKD-EPI 2021 ya calculado en el panel */
@@ -813,7 +886,19 @@ function preventTransform(d) {
   const bmi_1 = Math.min(bmiT, 1);
   const bmi_2 = Math.max(bmiT, 1) - 1;
 
-  return { ageT, nhdl, hdlT, sbp_1, sbp_2, dm, smoke, egfr_1, egfr_2, bptreat, statin, bptreat_x, statin_x, bmi_1, bmi_2, ageRaw: age };
+  // Predictores opcionales HbA1c y UACR (transformaciones oficiales del paquete preventr).
+  const hba1cRaw = num(d.hba1c);
+  const hba1cValid = has(hba1cRaw) && hba1cRaw >= 4.5 && hba1cRaw <= 15;
+  const hba1c_dm = hba1cValid && dm === 1 ? hba1cRaw - 5.3 : 0;
+  const hba1c_nodm = hba1cValid && dm === 0 ? hba1cRaw - 5.3 : 0;
+  const hba1c_miss = hba1cValid ? 0 : 1;
+
+  const uacrRaw = num(d.uacr);
+  const uacrValid = has(uacrRaw) && uacrRaw >= 0.1 && uacrRaw <= 25000;
+  const uacr_ln = uacrValid ? Math.log(uacrRaw) : 0;
+  const uacr_miss = uacrValid ? 0 : 1;
+
+  return { ageT, nhdl, hdlT, sbp_1, sbp_2, dm, smoke, egfr_1, egfr_2, bptreat, statin, bptreat_x, statin_x, bmi_1, bmi_2, ageRaw: age, hba1cValid, hba1c_dm, hba1c_nodm, hba1c_miss, uacrValid, uacr_ln, uacr_miss };
 }
 
 function preventBaseVal(name, t) {
@@ -838,6 +923,44 @@ function preventLinPred(coef, t) {
 }
 function toRiskPct(xb) {
   return (Math.exp(xb) / (Math.exp(xb) + 1)) * 100;
+}
+
+/* Variante de PREVENT con un predictor opcional (HbA1c o UACR). validKey es "hba1cValid"
+   o "uacrValid" (calculado en preventTransform); coef10/coef10hf/coef30/coef30hf son los
+   sets de PREVENT_COEF correspondientes a la variante. */
+function preventVariantCalc(d, validKey, coef10, coef10hf, coef30, coef30hf, label) {
+  const age = num(d.age), sbp = num(d.sbp), tc = num(d.totalChol), hdl = num(d.hdl);
+  const bmi = bmiOf(d), egfr = egfrOf(d);
+  const outOfRange = [];
+  if (age < 30 || age > 79) outOfRange.push("edad (válido 30–79)");
+  if (tc < 130 || tc > 320) outOfRange.push("col. total (válido 130–320)");
+  if (hdl < 20 || hdl > 100) outOfRange.push("HDL (válido 20–100)");
+  if (sbp < 90 || sbp > 200) outOfRange.push("TA sistólica (válido 90–200)");
+  if (bmi < 18.5 || bmi >= 40) outOfRange.push("IMC (válido 18.5–39.9, afecta solo IC)");
+  if (egfr <= 0) outOfRange.push("eGFR");
+  if (outOfRange.length > 0) {
+    return { value: "—", unit: "", read: `Fuera de rango validado por el modelo: ${outOfRange.join("; ")}. El paquete oficial devuelve NA en estos casos, así que no se calcula.` };
+  }
+  const t = preventTransform(d);
+  if (!t[validKey]) {
+    return { value: "—", unit: "", read: `${label} fuera del rango válido del modelo — se ignora y no se calcula esta variante (usar AHA PREVENT base).` };
+  }
+  const sexIdx = d.sex === "F" ? 1 : 0;
+  const cvd10 = toRiskPct(preventLinPred(coef10[`cvd_${sexIdx}`], t));
+  const ascvd10 = toRiskPct(preventLinPred(coef10[`ascvd_${sexIdx}`], t));
+  const hf10 = toRiskPct(preventLinPred(coef10hf[`hf_${sexIdx}`], t));
+  let line30 = "30 años: no aplica (modelo válido solo 30–59 años).";
+  if (t.ageRaw <= 59) {
+    const cvd30 = toRiskPct(preventLinPred(coef30[`cvd_${sexIdx}`], t));
+    const ascvd30 = toRiskPct(preventLinPred(coef30[`ascvd_${sexIdx}`], t));
+    const hf30 = toRiskPct(preventLinPred(coef30hf[`hf_${sexIdx}`], t));
+    line30 = `30 años — CVD total: ${cvd30.toFixed(1)}% · ASCVD: ${ascvd30.toFixed(1)}% · IC: ${hf30.toFixed(1)}%.`;
+  }
+  return {
+    value: cvd10.toFixed(1),
+    unit: "% (CVD 10a)",
+    read: `Variante oficial preventr (Khan SS et al., Circulation 2024) con ${label}. 10 años — CVD total: ${cvd10.toFixed(1)}% · ASCVD: ${ascvd10.toFixed(1)}% · IC: ${hf10.toFixed(1)}%. ${line30}`,
+  };
 }
 
 function importFromLabJson(raw) {
@@ -1100,6 +1223,20 @@ function App() {
     setShowList(false);
   };
 
+  const copyHcopScoreLine = async () => {
+    const line = buildHcopScoreLine(evaluated);
+    if (!line) {
+      setStatus("Ningún score cardiovascular está completo todavía (SCORE2-LAC / PREVENT).");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(line);
+      setStatus("Línea de scores copiada — pegala en el encabezado del HCOP.");
+    } catch (e) {
+      setStatus(`No se pudo copiar automáticamente. Línea: ${line}`);
+    }
+  };
+
   const exportAll = async () => {
     setStatus("Exportando…");
     try {
@@ -1196,6 +1333,9 @@ function App() {
           </button>
           <button onClick={exportAll} className="text-xs px-3 py-1.5 rounded border" style={{ borderColor: '#2A3140', color: '#C7CDDB' }}>
             Exportar todo (JSON)
+          </button>
+          <button onClick={copyHcopScoreLine} className="text-xs px-3 py-1.5 rounded border" style={{ borderColor: '#2A3140', color: '#C7CDDB' }}>
+            Copiar para HCOP
           </button>
           <button
             onClick={connectDrive}
@@ -1447,6 +1587,7 @@ function App() {
               <Field label="Plaquetas"><NumInput value={data.platelets || ""} onChange={set("platelets")} /></Field>
               <Field label="Creatinina"><NumInput value={data.creatinine || ""} onChange={set("creatinine")} /></Field>
               <Field label="UACR (mg/g)"><NumInput value={data.uacr || ""} onChange={set("uacr")} /></Field>
+              <Field label="HbA1c (%)"><NumInput value={data.hba1c || ""} onChange={set("hba1c")} /></Field>
               <Field label="Triglicéridos"><NumInput value={data.tgs || ""} onChange={set("tgs")} /></Field>
               <Field label="Glucemia"><NumInput value={data.glucose || ""} onChange={set("glucose")} /></Field>
               <Field label="Col. total"><NumInput value={data.totalChol || ""} onChange={set("totalChol")} /></Field>
@@ -1653,6 +1794,20 @@ window.storage = {
 };
 
 /* ---------- exportación a Markdown (para archivar en Drive u otro lado) ---------- */
+/* Línea de encabezado para pegar en el HCOP, formato — SCORE2-LAC: XX% — PREVENT: XX% —
+   (mismo patrón que ya usás para Lp(a)). Toma SCORE2-LAC y PREVENT base; si alguno no
+   está completo, se omite ese tramo. Si ninguno está completo, devuelve null. */
+function buildHcopScoreLine(evaluated) {
+  const byId = Object.fromEntries(evaluated.map((s) => [s.id, s]));
+  const parts = [];
+  const s2 = byId["score2lac"];
+  if (s2 && s2.complete) parts.push(`SCORE2-LAC: ${s2.result.value}%`);
+  const pv = byId["prevent"];
+  if (pv && pv.complete) parts.push(`PREVENT: ${pv.result.value}% (CVD 10a)`);
+  if (parts.length === 0) return null;
+  return `— ${parts.join(" — ")} —`;
+}
+
 function buildMarkdown(code, data, evaluated) {
   const fecha = new Date().toLocaleDateString("es-AR");
   const done = evaluated.filter((s) => s.complete);
