@@ -120,11 +120,20 @@ const SCORES = [
     calc: (d) => {
       const age = num(d.age), ast = num(d.ast), alt = num(d.alt), plt = num(d.platelets);
       const v = (age * ast) / (plt * Math.sqrt(alt));
-      let read;
-      if (v < 1.45) read = "Baja probabilidad de fibrosis avanzada";
-      else if (v > 3.25) read = "Alta probabilidad de fibrosis avanzada — considerar derivación a hepatología";
-      else read = "Zona indeterminada — considerar elastografía / FibroScan";
-      return { value: v.toFixed(2), unit: "", read };
+      let read, code;
+      if (v < 1.45) { read = "Baja probabilidad de fibrosis avanzada"; code = "baja"; }
+      else if (v > 3.25) { read = "Alta probabilidad de fibrosis avanzada — considerar derivación a hepatología"; code = "alta"; }
+      else { read = "Zona indeterminada — considerar elastografía / FibroScan"; code = "indeterminada"; }
+      const scale = {
+        type: "categorical",
+        currentCode: code,
+        items: [
+          { code: "baja", label: "< 1.45" },
+          { code: "indeterminada", label: "1.45 – 3.25" },
+          { code: "alta", label: "> 3.25" },
+        ],
+      };
+      return { value: v.toFixed(2), unit: "", read, scale };
     },
   },
   {
@@ -148,7 +157,17 @@ const SCORES = [
         : pts === highThresh - 1
         ? "Riesgo intermedio — anticoagulación a considerar"
         : "Riesgo bajo";
-      return { value: pts, unit: "pts", read };
+      const scale = {
+        type: "continuous",
+        value: pts,
+        min: 0,
+        max: 9,
+        cutoffs: [
+          { value: highThresh - 1, label: "Riesgo intermedio" },
+          { value: highThresh, label: "Riesgo alto" },
+        ],
+      };
+      return { value: pts, unit: "pts", read, scale };
     },
   },
   {
@@ -159,7 +178,19 @@ const SCORES = [
     calc: (d) => {
       const e = egfrOf(d);
       const g = gCategory(e);
-      return { value: e.toFixed(0), unit: "mL/min/1.73m²", read: `Categoría ${g.code} (${g.label})` };
+      const scale = {
+        type: "categorical",
+        currentCode: g.code,
+        items: [
+          { code: "G1", label: "≥90" },
+          { code: "G2", label: "60–89" },
+          { code: "G3a", label: "45–59" },
+          { code: "G3b", label: "30–44" },
+          { code: "G4", label: "15–29" },
+          { code: "G5", label: "<15" },
+        ],
+      };
+      return { value: e.toFixed(0), unit: "mL/min/1.73m²", read: `Categoría ${g.code} (${g.label})`, scale };
     },
   },
   {
@@ -172,10 +203,21 @@ const SCORES = [
       const g = gCategory(e);
       const a = aCategory(num(d.uacr));
       const risk = KDIGO_GRID[g.code][a.code];
+      const scale = {
+        type: "categorical",
+        currentCode: risk,
+        items: [
+          { code: "bajo", label: "Riesgo bajo" },
+          { code: "moderado", label: "Riesgo moderado" },
+          { code: "alto", label: "Riesgo alto" },
+          { code: "muy alto", label: "Riesgo muy alto" },
+        ],
+      };
       return {
         value: `${g.code} / ${a.code}`,
         unit: "",
         read: `eGFR ${e.toFixed(0)} · UACR ${d.uacr} mg/g — riesgo combinado: ${risk.toUpperCase()}`,
+        scale,
       };
     },
   },
@@ -187,10 +229,24 @@ const SCORES = [
     calc: (d) => {
       const tg = num(d.tgs), gl = num(d.glucose);
       const v = Math.log((tg * gl) / 2);
-      const read = v >= 4.68
-        ? "Sugiere insulinorresistencia (corte referencial ~4.68, variable según población)"
+      /* Fórmula: Ln[TG(mg/dL) × Glu(mg/dL)/2] (Simental-Mendía/Guerrero-Romero 2008,
+         tal como se publicó y como la usa la gran mayoría de la literatura CV/epidemiológica
+         posterior, incl. población argentina — Unger et al., Bahía Blanca 2014). En esta
+         escala el corte referencial ronda 8.5–9.0, NO ~4.68 (ese valor corresponde a la
+         variante alternativa Ln[TG×Glu]/2, que es otra escala — no mezclar cutoffs entre
+         fórmulas distintas). */
+      const cutoff = 8.8;
+      const read = v >= cutoff
+        ? "Sugiere insulinorresistencia (corte referencial ~8.8, variable según población: 8.5–9.0)"
         : "Sin sugerencia de insulinorresistencia por este índice";
-      return { value: v.toFixed(2), unit: "", read };
+      const scale = {
+        type: "continuous",
+        value: v,
+        min: 6,
+        max: 11,
+        cutoffs: [{ value: cutoff, label: "Corte referencial (IR)" }],
+      };
+      return { value: v.toFixed(2), unit: "", read, scale };
     },
   },
   {
@@ -211,7 +267,17 @@ const SCORES = [
       pts += d.neckLarge === "si" ? 1 : 0;
       pts += d.sex === "M" ? 1 : 0;
       const read = pts >= 5 ? "Riesgo alto de SAHOS" : pts >= 3 ? "Riesgo intermedio de SAHOS" : "Riesgo bajo de SAHOS";
-      return { value: pts, unit: "/8", read };
+      const scale = {
+        type: "continuous",
+        value: pts,
+        min: 0,
+        max: 8,
+        cutoffs: [
+          { value: 3, label: "Riesgo intermedio" },
+          { value: 5, label: "Riesgo alto" },
+        ],
+      };
+      return { value: pts, unit: "/8", read, scale };
     },
   },
   {
@@ -294,7 +360,12 @@ const SCORES = [
         3: "Tratamiento más intensivo de la obesidad; manejo agresivo de comorbilidades.",
         4: "Manejo agresivo según factibilidad; considerar manejo del dolor, terapia ocupacional, apoyo psicosocial.",
       };
-      return { value: stage, unit: "", read: `Estadio ${stage} (máximo de los 3 dominios) — ${MGMT[stage]}` };
+      const scale = {
+        type: "categorical",
+        currentCode: String(stage),
+        items: [0, 1, 2, 3, 4].map((n) => ({ code: String(n), label: `Estadio ${n}` })),
+      };
+      return { value: stage, unit: "", read: `Estadio ${stage} (máximo de los 3 dominios) — ${MGMT[stage]}`, scale };
     },
   },
   {
@@ -304,14 +375,26 @@ const SCORES = [
     required: ["weight", "height"],
     calc: (d) => {
       const v = bmiOf(d);
-      let read;
-      if (v < 18.5) read = "Bajo peso";
-      else if (v < 25) read = "Normal";
-      else if (v < 30) read = "Sobrepeso";
-      else if (v < 35) read = "Obesidad grado I";
-      else if (v < 40) read = "Obesidad grado II";
-      else read = "Obesidad grado III";
-      return { value: v.toFixed(1), unit: "kg/m²", read };
+      let read, code;
+      if (v < 18.5) { read = "Bajo peso"; code = "bajopeso"; }
+      else if (v < 25) { read = "Normal"; code = "normal"; }
+      else if (v < 30) { read = "Sobrepeso"; code = "sobrepeso"; }
+      else if (v < 35) { read = "Obesidad grado I"; code = "obI"; }
+      else if (v < 40) { read = "Obesidad grado II"; code = "obII"; }
+      else { read = "Obesidad grado III"; code = "obIII"; }
+      const scale = {
+        type: "categorical",
+        currentCode: code,
+        items: [
+          { code: "bajopeso", label: "<18.5" },
+          { code: "normal", label: "18.5–24.9" },
+          { code: "sobrepeso", label: "25–29.9" },
+          { code: "obI", label: "30–34.9" },
+          { code: "obII", label: "35–39.9" },
+          { code: "obIII", label: "≥40" },
+        ],
+      };
+      return { value: v.toFixed(1), unit: "kg/m²", read, scale };
     },
   },
   {
@@ -322,11 +405,20 @@ const SCORES = [
     calc: (d) => {
       const w = num(d.waist);
       const cut = d.sex === "M" ? [94, 102] : [80, 88];
-      let read;
-      if (w < cut[0]) read = "Sin riesgo aumentado";
-      else if (w < cut[1]) read = "Riesgo aumentado";
-      else read = "Riesgo sustancialmente aumentado";
-      return { value: w, unit: "cm", read };
+      let read, code;
+      if (w < cut[0]) { read = "Sin riesgo aumentado"; code = "sin"; }
+      else if (w < cut[1]) { read = "Riesgo aumentado"; code = "aumentado"; }
+      else { read = "Riesgo sustancialmente aumentado"; code = "sustancial"; }
+      const scale = {
+        type: "categorical",
+        currentCode: code,
+        items: [
+          { code: "sin", label: `< ${cut[0]} cm` },
+          { code: "aumentado", label: `${cut[0]}–${cut[1] - 1} cm` },
+          { code: "sustancial", label: `≥ ${cut[1]} cm` },
+        ],
+      };
+      return { value: w, unit: "cm", read, scale };
     },
   },
   {
@@ -338,7 +430,14 @@ const SCORES = [
       const w = num(d.waist), h = num(d.height);
       const v = w / h;
       const read = v >= 0.5 ? "≥0.5 — riesgo cardiometabólico aumentado" : "<0.5 — dentro de rango esperado";
-      return { value: v.toFixed(2), unit: "", read };
+      const scale = {
+        type: "continuous",
+        value: v,
+        min: 0.3,
+        max: 0.75,
+        cutoffs: [{ value: 0.5, label: "Corte de riesgo" }],
+      };
+      return { value: v.toFixed(2), unit: "", read, scale };
     },
   },
 ];
@@ -375,6 +474,77 @@ const GROUP_COLOR = {
   Sueño: "#6B7A99",
   Obesidad: "#5FA35A",
 };
+
+/* ---------- Escalas: Tipo 1 (categórica, por estadios) y Tipo 2 (continua, con cutoff) ---------- */
+
+function ScaleCategorical({ items, currentCode, color }) {
+  return (
+    <div className="flex flex-col gap-1 mt-4">
+      <div className="text-[10px] uppercase tracking-wide mb-0.5" style={{ color: '#5B6478' }}>Escala completa</div>
+      {items.map((it) => {
+        const isCurrent = it.code === currentCode;
+        return (
+          <div
+            key={it.code}
+            className="flex items-center justify-between px-2.5 py-1.5 rounded"
+            style={
+              isCurrent
+                ? { background: color, color: '#0D1017' }
+                : { background: '#12161E', color: '#5B6478' }
+            }
+          >
+            <span className={isCurrent ? "text-sm font-semibold" : "text-sm"}>
+              {it.code}{isCurrent ? "  ← paciente" : ""}
+            </span>
+            <span className={isCurrent ? "font-mono text-xs font-semibold" : "font-mono text-xs"}>
+              {it.label}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ScaleContinuous({ value, min, max, cutoffs, color }) {
+  const pct = (v) => Math.min(100, Math.max(0, ((v - min) / (max - min)) * 100));
+  return (
+    <div className="mt-4">
+      <div className="text-[10px] uppercase tracking-wide mb-2" style={{ color: '#5B6478' }}>Ubicación en la escala</div>
+      <div className="relative h-2 rounded-full" style={{ background: '#232A38' }}>
+        {cutoffs.map((c, i) => (
+          <div
+            key={i}
+            className="absolute top-0 bottom-0 w-[2px]"
+            style={{ left: `${pct(c.value)}%`, background: '#C98A3E' }}
+          />
+        ))}
+        <div
+          className="absolute rounded-full border-2"
+          style={{
+            left: `calc(${pct(value)}% - 7px)`,
+            top: '-5px',
+            width: '16px',
+            height: '16px',
+            background: color,
+            borderColor: '#0D1017',
+          }}
+        />
+      </div>
+      <div className="flex justify-between text-[10px] font-mono mt-1" style={{ color: '#5B6478' }}>
+        <span>{min}</span>
+        <span>{max}</span>
+      </div>
+      <div className="flex flex-col gap-0.5 mt-2">
+        {cutoffs.map((c, i) => (
+          <div key={i} className="text-[11px]" style={{ color: '#C98A3E' }}>
+            — {c.label}: {c.value}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function Field({ label, children }) {
   return (
@@ -1757,6 +1927,22 @@ function App() {
                   </div>
                 )}
                 <div className="text-sm leading-relaxed" style={{ color: '#C7CDDB' }}>{active.result.read}</div>
+                {active.result.scale && active.result.scale.type === "categorical" && (
+                  <ScaleCategorical
+                    items={active.result.scale.items}
+                    currentCode={active.result.scale.currentCode}
+                    color={GROUP_COLOR[active.group]}
+                  />
+                )}
+                {active.result.scale && active.result.scale.type === "continuous" && (
+                  <ScaleContinuous
+                    value={active.result.scale.value}
+                    min={active.result.scale.min}
+                    max={active.result.scale.max}
+                    cutoffs={active.result.scale.cutoffs}
+                    color={GROUP_COLOR[active.group]}
+                  />
+                )}
               </div>
             )}
           </div>
