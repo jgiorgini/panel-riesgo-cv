@@ -85,6 +85,26 @@ const SCORE2_LAC_RESCALE = {
 };
 
 const LAC_REGION_LABEL = { low: "Bajo riesgo", moderate: "Riesgo moderado", high: "Alto riesgo", veryhigh: "Muy alto riesgo" };
+/* OJO: LAC_REGION_LABEL clasifica el PAÍS/REGIÓN según su mortalidad CV de base (para elegir
+   la curva de recalibración correcta, Suppl. Table 1) — NO es la categoría de riesgo del
+   paciente. Antes se usaba por error como si fuera la categoría del paciente (ej. Argentina
+   = región "high" → mostraba "Alto riesgo" aunque el resultado individual diera 0.5%).
+   La categoría de riesgo del PACIENTE se calcula aparte con score2LacCategory(), usando los
+   puntos de corte por edad de las guías ESC 2021 para SCORE2 (edad 40–69, único rango
+   validado también para SCORE2-LAC). No hay categorías propias publicadas aún para
+   SCORE2-LAC específicamente — si Bijkerk et al. publican puntos de corte propios, actualizar
+   acá. */
+function score2LacCategory(riskPct, age) {
+  if (!has(riskPct) || !has(age) || age < 40 || age > 69) return null;
+  if (age < 50) {
+    if (riskPct < 2.5) return { code: "bajomoderado", label: "Bajo-moderado" };
+    if (riskPct < 7.5) return { code: "alto", label: "Alto" };
+    return { code: "muyalto", label: "Muy alto" };
+  }
+  if (riskPct < 5) return { code: "bajomoderado", label: "Bajo-moderado" };
+  if (riskPct < 10) return { code: "alto", label: "Alto" };
+  return { code: "muyalto", label: "Muy alto" };
+}
 
 /* País -> región (Supplementary Table 1). Ordenado igual que la tabla. */
 const LAC_COUNTRY_REGION = {
@@ -133,7 +153,8 @@ const SCORES = [
           { code: "alta", label: "> 3.25" },
         ],
       };
-      return { value: v.toFixed(2), unit: "", read, scale };
+      const CATLABEL = { baja: "Baja probabilidad", indeterminada: "Zona indeterminada", alta: "Alta probabilidad" };
+      return { value: v.toFixed(2), unit: "", read, category: CATLABEL[code], scale };
     },
   },
   {
@@ -152,6 +173,7 @@ const SCORES = [
       pts += d.vascular === "si" ? 1 : 0;
       pts += d.dm === "si" ? 1 : 0;
       const highThresh = d.sex === "F" ? 3 : 2;
+      const category = pts >= highThresh ? "Riesgo alto" : pts === highThresh - 1 ? "Riesgo intermedio" : "Riesgo bajo";
       const read = pts >= highThresh
         ? "Riesgo alto — anticoagulación generalmente indicada"
         : pts === highThresh - 1
@@ -167,7 +189,7 @@ const SCORES = [
           { value: highThresh, label: "Riesgo alto" },
         ],
       };
-      return { value: pts, unit: "pts", read, scale };
+      return { value: pts, unit: "pts", read, category, scale };
     },
   },
   {
@@ -190,7 +212,7 @@ const SCORES = [
           { code: "G5", label: "<15" },
         ],
       };
-      return { value: e.toFixed(0), unit: "mL/min/1.73m²", read: `Categoría ${g.code} (${g.label})`, scale };
+      return { value: e.toFixed(0), unit: "mL/min/1.73m²", read: `Categoría ${g.code} (${g.label})`, category: `Categoría ${g.code}`, scale };
     },
   },
   {
@@ -217,6 +239,7 @@ const SCORES = [
         value: `${g.code} / ${a.code}`,
         unit: "",
         read: `eGFR ${e.toFixed(0)} · UACR ${d.uacr} mg/g — riesgo combinado: ${risk.toUpperCase()}`,
+        category: `Riesgo ${risk}`,
         scale,
       };
     },
@@ -236,6 +259,7 @@ const SCORES = [
          variante alternativa Ln[TG×Glu]/2, que es otra escala — no mezclar cutoffs entre
          fórmulas distintas). */
       const cutoff = 8.8;
+      const category = v >= cutoff ? "Sugiere insulinorresistencia" : "Sin sugerencia de IR";
       const read = v >= cutoff
         ? "Sugiere insulinorresistencia (corte referencial ~8.8, variable según población: 8.5–9.0)"
         : "Sin sugerencia de insulinorresistencia por este índice";
@@ -246,7 +270,7 @@ const SCORES = [
         max: 11,
         cutoffs: [{ value: cutoff, label: "Corte referencial (IR)" }],
       };
-      return { value: v.toFixed(2), unit: "", read, scale };
+      return { value: v.toFixed(2), unit: "", read, category, scale };
     },
   },
   {
@@ -266,7 +290,8 @@ const SCORES = [
       pts += age > 50 ? 1 : 0;
       pts += d.neckLarge === "si" ? 1 : 0;
       pts += d.sex === "M" ? 1 : 0;
-      const read = pts >= 5 ? "Riesgo alto de SAHOS" : pts >= 3 ? "Riesgo intermedio de SAHOS" : "Riesgo bajo de SAHOS";
+      const category = pts >= 5 ? "Riesgo alto de SAHOS" : pts >= 3 ? "Riesgo intermedio de SAHOS" : "Riesgo bajo de SAHOS";
+      const read = category;
       const scale = {
         type: "continuous",
         value: pts,
@@ -277,7 +302,7 @@ const SCORES = [
           { value: 5, label: "Riesgo alto" },
         ],
       };
-      return { value: pts, unit: "/8", read, scale };
+      return { value: pts, unit: "/8", read, category, scale };
     },
   },
   {
@@ -314,6 +339,7 @@ const SCORES = [
         value: cvd10.toFixed(1),
         unit: "% (CVD 10a)",
         read: `Modelo base, validado contra el paquete oficial (AHAprevent R, v1.0.0) — coincide exacto en los casos de prueba. 10 años — CVD total: ${cvd10.toFixed(1)}% · ASCVD: ${ascvd10.toFixed(1)}% · IC: ${hf10.toFixed(1)}%. ${line30}`,
+        category: `${cvdRiskCategory(cvd10)} (cortes ASCVD ACC/AHA tradicionales, no publicados oficialmente para PREVENT)`,
       };
     },
   },
@@ -342,8 +368,17 @@ const SCORES = [
       if (age < 40 || age > 69) outOfRange.push("edad fuera del rango validado (40–69 años)");
       if (d.dm === "si") outOfRange.push("paciente diabético — SCORE2-LAC no está validado para diabetes, usar un score específico (ej. SCORE2-Diabetes)");
       const risk = score2LacOf(d);
-      const read = `${LAC_REGION_LABEL[d.lacRegion]} — riesgo a 10 años de evento cardiovascular fatal y no fatal (Bijkerk et al., Eur Heart J 2026, SCORE2-LAC).${outOfRange.length ? " Atención: " + outOfRange.join("; ") + "." : ""}`;
-      return { value: risk.toFixed(1), unit: "%", read };
+      const cat = score2LacCategory(risk, age);
+      const catText = cat ? `Categoría de riesgo del paciente: ${cat.label} (puntos de corte ESC 2021 por edad — sin categorías propias publicadas aún para SCORE2-LAC).` : "Categoría de riesgo del paciente: no aplica (edad fuera de 40–69 años).";
+      const read = `Riesgo a 10 años de evento cardiovascular fatal y no fatal (Bijkerk et al., Eur Heart J 2026, SCORE2-LAC). Región de calibración usada: ${LAC_REGION_LABEL[d.lacRegion]} (clasificación del país/región, no del paciente). ${catText}${outOfRange.length ? " Atención: " + outOfRange.join("; ") + "." : ""}`;
+      const scale = cat ? {
+        type: "categorical",
+        currentCode: cat.code,
+        items: age < 50
+          ? [{ code: "bajomoderado", label: "<2.5%" }, { code: "alto", label: "2.5–<7.5%" }, { code: "muyalto", label: "≥7.5%" }]
+          : [{ code: "bajomoderado", label: "<5%" }, { code: "alto", label: "5–<10%" }, { code: "muyalto", label: "≥10%" }],
+      } : undefined;
+      return { value: risk.toFixed(1), unit: "%", read, category: cat ? cat.label : "no aplica (edad fuera de rango)", scale };
     },
   },
   {
@@ -365,7 +400,7 @@ const SCORES = [
         currentCode: String(stage),
         items: [0, 1, 2, 3, 4].map((n) => ({ code: String(n), label: `Estadio ${n}` })),
       };
-      return { value: stage, unit: "", read: `Estadio ${stage} (máximo de los 3 dominios) — ${MGMT[stage]}`, scale };
+      return { value: stage, unit: "", read: `Estadio ${stage} (máximo de los 3 dominios) — ${MGMT[stage]}`, category: `Estadio ${stage}`, scale };
     },
   },
   {
@@ -394,7 +429,7 @@ const SCORES = [
           { code: "obIII", label: "≥40" },
         ],
       };
-      return { value: v.toFixed(1), unit: "kg/m²", read, scale };
+      return { value: v.toFixed(1), unit: "kg/m²", read, category: read, scale };
     },
   },
   {
@@ -418,7 +453,7 @@ const SCORES = [
           { code: "sustancial", label: `≥ ${cut[1]} cm` },
         ],
       };
-      return { value: w, unit: "cm", read, scale };
+      return { value: w, unit: "cm", read, category: read, scale };
     },
   },
   {
@@ -429,6 +464,7 @@ const SCORES = [
     calc: (d) => {
       const w = num(d.waist), h = num(d.height);
       const v = w / h;
+      const category = v >= 0.5 ? "Riesgo cardiometabólico aumentado" : "Dentro de rango esperado";
       const read = v >= 0.5 ? "≥0.5 — riesgo cardiometabólico aumentado" : "<0.5 — dentro de rango esperado";
       const scale = {
         type: "continuous",
@@ -437,7 +473,7 @@ const SCORES = [
         max: 0.75,
         cutoffs: [{ value: 0.5, label: "Corte de riesgo" }],
       };
-      return { value: v.toFixed(2), unit: "", read, scale };
+      return { value: v.toFixed(2), unit: "", read, category, scale };
     },
   },
 ];
@@ -1098,6 +1134,16 @@ function toRiskPct(xb) {
 /* Variante de PREVENT con un predictor opcional (HbA1c o UACR). validKey es "hba1cValid"
    o "uacrValid" (calculado en preventTransform); coef10/coef10hf/coef30/coef30hf son los
    sets de PREVENT_COEF correspondientes a la variante. */
+/* No hay categorías propias publicadas para AHA PREVENT; se usan los cortes tradicionales
+   ACC/AHA de riesgo ASCVD a 10 años (bajo <5%, límite 5–<7.5%, intermedio 7.5–<20%, alto ≥20%),
+   aplicados al CVD total 10a que devuelve el modelo — aclarar esto al leer la categoría. */
+function cvdRiskCategory(pct) {
+  if (pct < 5) return "Bajo";
+  if (pct < 7.5) return "Límite";
+  if (pct < 20) return "Intermedio";
+  return "Alto";
+}
+
 function preventVariantCalc(d, validKey, coef10, coef10hf, coef30, coef30hf, label) {
   const age = num(d.age), sbp = num(d.sbp), tc = num(d.totalChol), hdl = num(d.hdl);
   const bmi = bmiOf(d), egfr = egfrOf(d);
@@ -1130,6 +1176,7 @@ function preventVariantCalc(d, validKey, coef10, coef10hf, coef30, coef30hf, lab
     value: cvd10.toFixed(1),
     unit: "% (CVD 10a)",
     read: `Variante oficial preventr (Khan SS et al., Circulation 2024) con ${label}. 10 años — CVD total: ${cvd10.toFixed(1)}% · ASCVD: ${ascvd10.toFixed(1)}% · IC: ${hf10.toFixed(1)}%. ${line30}`,
+    category: `${cvdRiskCategory(cvd10)} (cortes ASCVD ACC/AHA tradicionales, no publicados oficialmente para PREVENT)`,
   };
 }
 
@@ -1989,7 +2036,21 @@ window.storage = {
 function buildHcopScoreLine(evaluated) {
   const parts = evaluated
     .filter((s) => s.complete && s.result && s.result.value !== "—" && s.result.value !== "err")
-    .map((s) => `${s.name}: ${s.result.value}${s.result.unit ? " " + s.result.unit : ""}`);
+    .map((s) => {
+      const r = s.result;
+      let out = `${s.name}: ${r.value}${r.unit ? " " + r.unit : ""}`;
+      if (r.category) out += ` (${r.category})`;
+      if (r.scale) {
+        if (r.scale.type === "categorical") {
+          const item = r.scale.items.find((it) => it.code === r.scale.currentCode);
+          if (item) out += ` [ref.: ${item.label}]`;
+        } else if (r.scale.type === "continuous" && r.scale.cutoffs && r.scale.cutoffs.length) {
+          const cutoffText = r.scale.cutoffs.map((c) => `${c.label} ${c.value}`).join(" / ");
+          out += ` [ref.: ${cutoffText}]`;
+        }
+      }
+      return out;
+    });
   if (parts.length === 0) return null;
   return `— ${parts.join(" — ")} —`;
 }
