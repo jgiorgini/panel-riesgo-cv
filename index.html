@@ -363,49 +363,37 @@ const SCORES = [
     id: "prevent",
     name: "AHA PREVENT",
     group: "Cardio",
-    required: ["age", "sex", "sbp", "totalChol", "hdl", "smoker", "dm", "onAntihtn", "onStatin", "creatinine"],
+    required: ["age", "sex", "sbp", "totalChol", "hdl", "smoker", "dm", "onAntihtn", "onStatin", "creatinine", "weight", "height"],
     calc: (d) => {
-      if (d.ascvd === "si") {
-        return {
-          value: "—",
-          unit: "",
-          status: "not_applicable",
-          read: "No aplicable para estratificación de prevención primaria: el paciente tiene ASCVD clínica previa.",
-          category: "No aplicable",
-        };
-      }
       const age = num(d.age), sbp = num(d.sbp), tc = num(d.totalChol), hdl = num(d.hdl);
-      const egfr = egfrOf(d);
+      const bmi = bmiOf(d), egfr = egfrOf(d);
       const outOfRange = [];
       if (age < 30 || age > 79) outOfRange.push("edad (válido 30–79)");
       if (tc < 130 || tc > 320) outOfRange.push("col. total (válido 130–320)");
       if (hdl < 20 || hdl > 100) outOfRange.push("HDL (válido 20–100)");
       if (sbp < 90 || sbp > 200) outOfRange.push("TA sistólica (válido 90–200)");
-      if (!has(egfr) || egfr <= 0) outOfRange.push("eGFR");
+      if (bmi < 18.5 || bmi >= 40) outOfRange.push("IMC (válido 18.5–39.9, afecta solo IC)");
+      if (egfr <= 0) outOfRange.push("eGFR");
       if (outOfRange.length > 0) {
-        return { value: "—", unit: "", status: "invalid_input", read: `Fuera de rango validado por el modelo: ${outOfRange.join("; ")}. No se calcula.` };
+        return { value: "—", unit: "", read: `Fuera de rango validado por el modelo: ${outOfRange.join("; ")}. El paquete oficial devuelve NA en estos casos, así que no se calcula.` };
       }
       const t = preventTransform(d);
       const sexIdx = d.sex === "F" ? 1 : 0;
       const cvd10 = toRiskPct(preventLinPred(PREVENT_COEF.y10[`cvd_${sexIdx}`], t));
       const ascvd10 = toRiskPct(preventLinPred(PREVENT_COEF.y10[`ascvd_${sexIdx}`], t));
-      const hf10Text = t.bmiValid
-        ? `${toRiskPct(preventLinPred(PREVENT_COEF.y10hf[`hf_${sexIdx}`], t)).toFixed(1)}%`
-        : "no calculada (requiere IMC 18.5–39.9)";
+      const hf10 = toRiskPct(preventLinPred(PREVENT_COEF.y10hf[`hf_${sexIdx}`], t));
       let line30 = "30 años: no aplica (modelo válido solo 30–59 años).";
       if (t.ageRaw <= 59) {
         const cvd30 = toRiskPct(preventLinPred(PREVENT_COEF.y30[`cvd_${sexIdx}`], t));
         const ascvd30 = toRiskPct(preventLinPred(PREVENT_COEF.y30[`ascvd_${sexIdx}`], t));
-        const hf30Text = t.bmiValid
-          ? `${toRiskPct(preventLinPred(PREVENT_COEF.y30hf[`hf_${sexIdx}`], t)).toFixed(1)}%`
-          : "no calculada";
-        line30 = `30 años — ASCVD: ${ascvd30.toFixed(1)}% · CVD total: ${cvd30.toFixed(1)}% · IC: ${hf30Text}.`;
+        const hf30 = toRiskPct(preventLinPred(PREVENT_COEF.y30hf[`hf_${sexIdx}`], t));
+        line30 = `30 años — CVD total: ${cvd30.toFixed(1)}% · ASCVD: ${ascvd30.toFixed(1)}% · IC: ${hf30.toFixed(1)}%.`;
       }
       return {
-        value: ascvd10.toFixed(1),
-        unit: "% (ASCVD 10a)",
-        read: `PREVENT-ASCVD, endpoint principal para prevención primaria según ACC/AHA 2026. 10 años — ASCVD: ${ascvd10.toFixed(1)}% · CVD total: ${cvd10.toFixed(1)}% · IC: ${hf10Text}. ${line30}`,
-        category: preventAscvdCategory(ascvd10),
+        value: cvd10.toFixed(1),
+        unit: "% (CVD 10a)",
+        read: `Modelo base, validado contra el paquete oficial (AHAprevent R, v1.0.0) — coincide exacto en los casos de prueba. 10 años — CVD total: ${cvd10.toFixed(1)}% · ASCVD: ${ascvd10.toFixed(1)}% · IC: ${hf10.toFixed(1)}%. ${line30}`,
+        category: `${cvdRiskCategory(cvd10)} (cortes ASCVD ACC/AHA tradicionales, no publicados oficialmente para PREVENT)`,
       };
     },
   },
@@ -413,14 +401,14 @@ const SCORES = [
     id: "prevent_hba1c",
     name: "AHA PREVENT +HbA1c",
     group: "Cardio",
-    required: ["age", "sex", "sbp", "totalChol", "hdl", "smoker", "dm", "onAntihtn", "onStatin", "creatinine", "hba1c"],
+    required: ["age", "sex", "sbp", "totalChol", "hdl", "smoker", "dm", "onAntihtn", "onStatin", "creatinine", "weight", "height", "hba1c"],
     calc: (d) => preventVariantCalc(d, "hba1cValid", PREVENT_COEF.y10hba1c, PREVENT_COEF.y10hba1chf, PREVENT_COEF.y30hba1c, PREVENT_COEF.y30hba1chf, "HbA1c"),
   },
   {
     id: "prevent_uacr",
     name: "AHA PREVENT +UACR",
     group: "Cardio",
-    required: ["age", "sex", "sbp", "totalChol", "hdl", "smoker", "dm", "onAntihtn", "onStatin", "creatinine", "uacr"],
+    required: ["age", "sex", "sbp", "totalChol", "hdl", "smoker", "dm", "onAntihtn", "onStatin", "creatinine", "weight", "height", "uacr"],
     calc: (d) => preventVariantCalc(d, "uacrValid", PREVENT_COEF.y10uacr, PREVENT_COEF.y10uacrhf, PREVENT_COEF.y30uacr, PREVENT_COEF.y30uacrhf, "UACR"),
   },
   {
@@ -1206,7 +1194,7 @@ function preventTransform(d) {
   const bmiRaw = bmiOf(d);
   const egfr = egfrOf(d);
   const tcRaw = num(d.totalChol), hdlRaw = num(d.hdl);
-  if (![age, sbpRaw, egfr, tcRaw, hdlRaw].every(has)) return null;
+  if (![age, sbpRaw, bmiRaw, egfr, tcRaw, hdlRaw].every(has)) return null;
 
   const ageT = (age - 55) / 10;
   const sbpT = (sbpRaw - 110) / 20;
@@ -1227,10 +1215,9 @@ function preventTransform(d) {
   const egfr_1 = -Math.min(egfr, 60) / 15 + 4;
   const egfr_2 = -Math.max(egfr, 60) / 15 + 6;
 
-  const bmiValid = has(bmiRaw) && bmiRaw >= 18.5 && bmiRaw < 40;
-  const bmiT = bmiValid ? (bmiRaw - 25) / 5 : null;
-  const bmi_1 = bmiValid ? Math.min(bmiT, 1) : null;
-  const bmi_2 = bmiValid ? Math.max(bmiT, 1) - 1 : null;
+  const bmiT = (bmiRaw - 25) / 5;
+  const bmi_1 = Math.min(bmiT, 1);
+  const bmi_2 = Math.max(bmiT, 1) - 1;
 
   // Predictores opcionales HbA1c y UACR (transformaciones oficiales del paquete preventr).
   const hba1cRaw = num(d.hba1c);
@@ -1244,7 +1231,7 @@ function preventTransform(d) {
   const uacr_ln = uacrValid ? Math.log(uacrRaw) : 0;
   const uacr_miss = uacrValid ? 0 : 1;
 
-  return { ageT, nhdl, hdlT, sbp_1, sbp_2, dm, smoke, egfr_1, egfr_2, bptreat, statin, bptreat_x, statin_x, bmiValid, bmi_1, bmi_2, ageRaw: age, hba1cValid, hba1c_dm, hba1c_nodm, hba1c_miss, uacrValid, uacr_ln, uacr_miss };
+  return { ageT, nhdl, hdlT, sbp_1, sbp_2, dm, smoke, egfr_1, egfr_2, bptreat, statin, bptreat_x, statin_x, bmi_1, bmi_2, ageRaw: age, hba1cValid, hba1c_dm, hba1c_nodm, hba1c_miss, uacrValid, uacr_ln, uacr_miss };
 }
 
 function preventBaseVal(name, t) {
@@ -1274,61 +1261,49 @@ function toRiskPct(xb) {
 /* Variante de PREVENT con un predictor opcional (HbA1c o UACR). validKey es "hba1cValid"
    o "uacrValid" (calculado en preventTransform); coef10/coef10hf/coef30/coef30hf son los
    sets de PREVENT_COEF correspondientes a la variante. */
-/* Categorías de riesgo PREVENT-ASCVD adoptadas por la guía ACC/AHA de dislipidemia 2026:
-   bajo <3%, borderline 3–<5%, intermedio 5–<10%, alto ≥10%. Se aplican al endpoint
-   ASCVD a 10 años, no a CVD total. */
-function preventAscvdCategory(pct) {
-  if (pct < 3) return "Bajo";
-  if (pct < 5) return "Borderline";
-  if (pct < 10) return "Intermedio";
+/* No hay categorías propias publicadas para AHA PREVENT; se usan los cortes tradicionales
+   ACC/AHA de riesgo ASCVD a 10 años (bajo <5%, límite 5–<7.5%, intermedio 7.5–<20%, alto ≥20%),
+   aplicados al CVD total 10a que devuelve el modelo — aclarar esto al leer la categoría. */
+function cvdRiskCategory(pct) {
+  if (pct < 5) return "Bajo";
+  if (pct < 7.5) return "Límite";
+  if (pct < 20) return "Intermedio";
   return "Alto";
 }
 
 function preventVariantCalc(d, validKey, coef10, coef10hf, coef30, coef30hf, label) {
-  if (d.ascvd === "si") {
-    return {
-      value: "—",
-      unit: "",
-      status: "not_applicable",
-      read: "No aplicable para estratificación de prevención primaria: el paciente tiene ASCVD clínica previa.",
-      category: "No aplicable",
-    };
-  }
   const age = num(d.age), sbp = num(d.sbp), tc = num(d.totalChol), hdl = num(d.hdl);
-  const egfr = egfrOf(d);
+  const bmi = bmiOf(d), egfr = egfrOf(d);
   const outOfRange = [];
   if (age < 30 || age > 79) outOfRange.push("edad (válido 30–79)");
   if (tc < 130 || tc > 320) outOfRange.push("col. total (válido 130–320)");
   if (hdl < 20 || hdl > 100) outOfRange.push("HDL (válido 20–100)");
   if (sbp < 90 || sbp > 200) outOfRange.push("TA sistólica (válido 90–200)");
-  if (!has(egfr) || egfr <= 0) outOfRange.push("eGFR");
+  if (bmi < 18.5 || bmi >= 40) outOfRange.push("IMC (válido 18.5–39.9, afecta solo IC)");
+  if (egfr <= 0) outOfRange.push("eGFR");
   if (outOfRange.length > 0) {
-    return { value: "—", unit: "", status: "invalid_input", read: `Fuera de rango validado por el modelo: ${outOfRange.join("; ")}. No se calcula.` };
+    return { value: "—", unit: "", read: `Fuera de rango validado por el modelo: ${outOfRange.join("; ")}. El paquete oficial devuelve NA en estos casos, así que no se calcula.` };
   }
   const t = preventTransform(d);
   if (!t[validKey]) {
-    return { value: "—", unit: "", status: "invalid_input", read: `${label} fuera del rango válido del modelo — no se calcula esta variante (usar AHA PREVENT base).` };
+    return { value: "—", unit: "", read: `${label} fuera del rango válido del modelo — se ignora y no se calcula esta variante (usar AHA PREVENT base).` };
   }
   const sexIdx = d.sex === "F" ? 1 : 0;
   const cvd10 = toRiskPct(preventLinPred(coef10[`cvd_${sexIdx}`], t));
   const ascvd10 = toRiskPct(preventLinPred(coef10[`ascvd_${sexIdx}`], t));
-  const hf10Text = t.bmiValid
-    ? `${toRiskPct(preventLinPred(coef10hf[`hf_${sexIdx}`], t)).toFixed(1)}%`
-    : "no calculada (requiere IMC 18.5–39.9)";
+  const hf10 = toRiskPct(preventLinPred(coef10hf[`hf_${sexIdx}`], t));
   let line30 = "30 años: no aplica (modelo válido solo 30–59 años).";
   if (t.ageRaw <= 59) {
     const cvd30 = toRiskPct(preventLinPred(coef30[`cvd_${sexIdx}`], t));
     const ascvd30 = toRiskPct(preventLinPred(coef30[`ascvd_${sexIdx}`], t));
-    const hf30Text = t.bmiValid
-      ? `${toRiskPct(preventLinPred(coef30hf[`hf_${sexIdx}`], t)).toFixed(1)}%`
-      : "no calculada";
-    line30 = `30 años — ASCVD: ${ascvd30.toFixed(1)}% · CVD total: ${cvd30.toFixed(1)}% · IC: ${hf30Text}.`;
+    const hf30 = toRiskPct(preventLinPred(coef30hf[`hf_${sexIdx}`], t));
+    line30 = `30 años — CVD total: ${cvd30.toFixed(1)}% · ASCVD: ${ascvd30.toFixed(1)}% · IC: ${hf30.toFixed(1)}%.`;
   }
   return {
-    value: ascvd10.toFixed(1),
-    unit: "% (ASCVD 10a)",
-    read: `PREVENT-ASCVD con ${label}. 10 años — ASCVD: ${ascvd10.toFixed(1)}% · CVD total: ${cvd10.toFixed(1)}% · IC: ${hf10Text}. ${line30}`,
-    category: preventAscvdCategory(ascvd10),
+    value: cvd10.toFixed(1),
+    unit: "% (CVD 10a)",
+    read: `Variante oficial preventr (Khan SS et al., Circulation 2024) con ${label}. 10 años — CVD total: ${cvd10.toFixed(1)}% · ASCVD: ${ascvd10.toFixed(1)}% · IC: ${hf10.toFixed(1)}%. ${line30}`,
+    category: `${cvdRiskCategory(cvd10)} (cortes ASCVD ACC/AHA tradicionales, no publicados oficialmente para PREVENT)`,
   };
 }
 
