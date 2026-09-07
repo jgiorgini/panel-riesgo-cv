@@ -25,8 +25,46 @@ const { useState, useMemo } = React;
 
 /* ---------- utilidades de cálculo ---------- */
 
+const APP_VERSION = "1.1.0";
+const SCHEMA_VERSION = 2;
+
 const num = (v) => (v === "" || v === null || v === undefined ? null : parseFloat(v));
 const has = (v) => v !== "" && v !== null && v !== undefined && !Number.isNaN(v);
+
+/* Rangos de plausibilidad: bloquean errores de carga claramente imposibles antes de
+   que puedan propagarse a fórmulas clínicas. Los rangos de VALIDACIÓN propios de cada
+   score (p. ej. PREVENT 30–79 años) se aplican además dentro de cada motor. */
+const NUMERIC_RULES = {
+  age: [18, 120],
+  ast: [0.1, 10000],
+  alt: [0.1, 10000],
+  platelets: [1, 2000],
+  creatinine: [0.1, 20],
+  tgs: [10, 5000],
+  glucose: [20, 1000],
+  totalChol: [50, 1000],
+  hdl: [5, 200],
+  uacr: [0, 25000],
+  hba1c: [2, 25],
+  sbp: [50, 300],
+  weight: [20, 400],
+  height: [100, 250],
+  waist: [30, 250],
+};
+
+function numericInputErrors(data, fields) {
+  const errors = [];
+  for (const field of fields) {
+    const rule = NUMERIC_RULES[field];
+    if (!rule || !has(data[field])) continue;
+    const v = num(data[field]);
+    const [min, max] = rule;
+    if (!Number.isFinite(v) || v < min || v > max) {
+      errors.push(`${FIELD_LABELS[field] || field}: ${data[field]} (rango plausible ${min}–${max})`);
+    }
+  }
+  return errors;
+}
 
 function bmiOf(data) {
   const w = num(data.weight), h = num(data.height);
@@ -158,38 +196,46 @@ const SCORES = [
     },
   },
   {
-    id: "cha2ds2vasc",
-    name: "CHA₂DS₂-VASc",
+    id: "cha2ds2va",
+    name: "CHA₂DS₂-VA",
     group: "Cardio",
-    required: ["age", "sex", "chf", "htn", "stroke", "vascular", "dm"],
+    required: ["age", "sex", "chf", "htn", "stroke", "vascular", "dm", "af"],
     calc: (d) => {
+      if (d.af !== "si") {
+        return {
+          value: "—",
+          unit: "",
+          status: "not_applicable",
+          read: "No aplicable: CHA₂DS₂-VA se utiliza para estratificación tromboembólica en fibrilación auricular/flutter auricular.",
+          category: "No aplicable",
+        };
+      }
       const age = num(d.age);
-      let pts = 0;
-      pts += age >= 75 ? 2 : age >= 65 ? 1 : 0;
-      pts += d.sex === "F" ? 1 : 0;
-      pts += d.chf === "si" ? 1 : 0;
-      pts += d.htn === "si" ? 1 : 0;
-      pts += d.stroke === "si" ? 2 : 0;
-      pts += d.vascular === "si" ? 1 : 0;
-      pts += d.dm === "si" ? 1 : 0;
-      const highThresh = d.sex === "F" ? 3 : 2;
-      const category = pts >= highThresh ? "Riesgo alto" : pts === highThresh - 1 ? "Riesgo intermedio" : "Riesgo bajo";
-      const read = pts >= highThresh
-        ? "Riesgo alto — anticoagulación generalmente indicada"
-        : pts === highThresh - 1
-        ? "Riesgo intermedio — anticoagulación a considerar"
-        : "Riesgo bajo";
+      let va = 0;
+      va += age >= 75 ? 2 : age >= 65 ? 1 : 0;
+      va += d.chf === "si" ? 1 : 0;
+      va += d.htn === "si" ? 1 : 0;
+      va += d.stroke === "si" ? 2 : 0;
+      va += d.vascular === "si" ? 1 : 0;
+      va += d.dm === "si" ? 1 : 0;
+      const vasc = va + (d.sex === "F" ? 1 : 0);
+      const category = va >= 2 ? "Anticoagulación recomendada" : va === 1 ? "Anticoagulación a considerar" : "Riesgo tromboembólico bajo";
+      const read = va >= 2
+        ? `ESC 2024: anticoagulación oral recomendada en pacientes elegibles. CHA₂DS₂-VASc equivalente: ${vasc}.`
+        : va === 1
+        ? `ESC 2024: anticoagulación oral debe considerarse según beneficio neto y contexto clínico. CHA₂DS₂-VASc equivalente: ${vasc}.`
+        : `ESC 2024: bajo riesgo tromboembólico; anticoagulación no indicada por el score aislado. CHA₂DS₂-VASc equivalente: ${vasc}.`;
       const scale = {
         type: "continuous",
-        value: pts,
+        value: va,
         min: 0,
-        max: 9,
+        max: 8,
         cutoffs: [
-          { value: highThresh - 1, label: "Riesgo intermedio" },
-          { value: highThresh, label: "Riesgo alto" },
+          { value: 1, label: "Considerar anticoagulación" },
+          { value: 2, label: "Anticoagulación recomendada" },
         ],
       };
-      return { value: pts, unit: "pts", read, category, scale };
+      return { value: va, unit: "pts", read, category, scale };
     },
   },
   {
@@ -290,16 +336,24 @@ const SCORES = [
       pts += age > 50 ? 1 : 0;
       pts += d.neckLarge === "si" ? 1 : 0;
       pts += d.sex === "M" ? 1 : 0;
-      const category = pts >= 5 ? "Riesgo alto de SAHOS" : pts >= 3 ? "Riesgo intermedio de SAHOS" : "Riesgo bajo de SAHOS";
-      const read = category;
+      const stop = (d.snoring === "si" ? 1 : 0) + (d.tiredness === "si" ? 1 : 0) + (d.observedApnea === "si" ? 1 : 0) + (d.htn === "si" ? 1 : 0);
+      const highByCombination = stop >= 2 && (d.sex === "M" || bmi > 35 || d.neckLarge === "si");
+      const category = (pts >= 5 || highByCombination)
+        ? "Riesgo alto de SAHOS"
+        : pts >= 3
+        ? "Riesgo intermedio de SAHOS"
+        : "Riesgo bajo de SAHOS";
+      const read = highByCombination && pts < 5
+        ? `${category} — reclasificado por STOP ≥2 más ${d.sex === "M" ? "sexo masculino" : bmi > 35 ? "IMC >35" : "cuello >40 cm"}.`
+        : category;
       const scale = {
         type: "continuous",
         value: pts,
         min: 0,
         max: 8,
         cutoffs: [
-          { value: 3, label: "Riesgo intermedio" },
-          { value: 5, label: "Riesgo alto" },
+          { value: 3, label: "Riesgo intermedio por puntaje" },
+          { value: 5, label: "Riesgo alto por puntaje" },
         ],
       };
       return { value: pts, unit: "/8", read, category, scale };
@@ -364,21 +418,45 @@ const SCORES = [
     required: ["age", "sex", "sbp", "totalChol", "hdl", "smoker", "dm", "lacRegion"],
     calc: (d) => {
       const age = num(d.age);
-      const outOfRange = [];
-      if (age < 40 || age > 69) outOfRange.push("edad fuera del rango validado (40–69 años)");
-      if (d.dm === "si") outOfRange.push("paciente diabético — SCORE2-LAC no está validado para diabetes, usar un score específico (ej. SCORE2-Diabetes)");
+      if (age < 40 || age > 69) {
+        return {
+          value: "—",
+          unit: "",
+          status: "not_applicable",
+          read: "No aplicable: SCORE2-LAC está validado para edades de 40 a 69 años.",
+          category: "No aplicable",
+        };
+      }
+      if (d.dm === "si") {
+        return {
+          value: "—",
+          unit: "",
+          status: "not_applicable",
+          read: "No aplicable: SCORE2-LAC no está validado en pacientes con diabetes mellitus; utilizar un modelo específico para diabetes.",
+          category: "No aplicable",
+        };
+      }
+      if (d.ascvd === "si") {
+        return {
+          value: "—",
+          unit: "",
+          status: "not_applicable",
+          read: "No aplicable: SCORE2-LAC es un modelo de prevención primaria y no debe utilizarse ante ASCVD clínica previa.",
+          category: "No aplicable",
+        };
+      }
       const risk = score2LacOf(d);
       const cat = score2LacCategory(risk, age);
-      const catText = cat ? `Categoría de riesgo del paciente: ${cat.label} (puntos de corte ESC 2021 por edad — sin categorías propias publicadas aún para SCORE2-LAC).` : "Categoría de riesgo del paciente: no aplica (edad fuera de 40–69 años).";
-      const read = `Riesgo a 10 años de evento cardiovascular fatal y no fatal (Bijkerk et al., Eur Heart J 2026, SCORE2-LAC). Región de calibración usada: ${LAC_REGION_LABEL[d.lacRegion]} (clasificación del país/región, no del paciente). ${catText}${outOfRange.length ? " Atención: " + outOfRange.join("; ") + "." : ""}`;
-      const scale = cat ? {
+      const catText = `Categoría de riesgo del paciente: ${cat.label} (puntos de corte ESC 2021 por edad — sin categorías propias publicadas aún para SCORE2-LAC).`;
+      const read = `Riesgo a 10 años de evento cardiovascular fatal y no fatal (Bijkerk et al., Eur Heart J 2026, SCORE2-LAC). Región de calibración usada: ${LAC_REGION_LABEL[d.lacRegion]} (clasificación del país/región, no del paciente). ${catText}`;
+      const scale = {
         type: "categorical",
         currentCode: cat.code,
         items: age < 50
           ? [{ code: "bajomoderado", label: "<2.5%" }, { code: "alto", label: "2.5–<7.5%" }, { code: "muyalto", label: "≥7.5%" }]
           : [{ code: "bajomoderado", label: "<5%" }, { code: "alto", label: "5–<10%" }, { code: "muyalto", label: "≥10%" }],
-      } : undefined;
-      return { value: risk.toFixed(1), unit: "%", read, category: cat ? cat.label : "no aplica (edad fuera de rango)", scale };
+      };
+      return { value: risk.toFixed(1), unit: "%", read, category: cat.label, scale };
     },
   },
   {
@@ -483,7 +561,8 @@ const FIELD_LABELS = {
   creatinine: "Creatinina", tgs: "Triglicéridos", glucose: "Glucemia", totalChol: "Col. total",
   hdl: "HDL", uacr: "UACR (albúmina/creatinina en orina)", hba1c: "HbA1c", htn: "HTA", dm: "Diabetes",
   disglucemia: "Disglucemia (prediabetes)",
-  stroke: "ACV/AIT previo", vascular: "Enf. vascular", chf: "Insuf. cardíaca", sbp: "TA sistólica",
+  stroke: "ACV/AIT previo", vascular: "Enf. vascular", chf: "Insuf. cardíaca", af: "FA / flutter auricular",
+  ascvd: "ASCVD clínica previa", sbp: "TA sistólica",
   smoker: "Tabaquismo", onStatin: "Estatina actual", onAntihtn: "Antihipertensivo actual",
   weight: "Peso", height: "Talla", waist: "Circ. de cintura", snoring: "Ronquido",
   tiredness: "Cansancio diurno", observedApnea: "Apnea observada", neckLarge: "Cuello >40cm",
@@ -734,15 +813,47 @@ const HCOP_BINARY_FIELDS = [
   { field: "htn", positive: [/\bHTA\b/i, /hipertensi[oó]n arterial/i], negative: [/sin\s+HTA/i, /niega\s+HTA/i, /no\s+hipertens/i] },
   { field: "dm", positive: [/\bDBT\b\s*(tipo)?\s*[12]?/i, /diabetes(\s+tipo\s*[12])?/i, /\bDM2?\b/i], negative: [/sin\s+DBT/i, /niega\s+diabetes/i, /no\s+diab[eé]tic/i] },
   { field: "stroke", positive: [/\bACV\b/i, /\bAIT\b/i, /accidente\s+cerebrovascular/i], negative: [/sin\s+ACV/i, /niega\s+ACV/i, /sin\s+AIT/i] },
-  { field: "vascular", positive: [/enfermedad\s+vascular/i, /vasculopat[ií]a/i, /enfermedad\s+arterial\s+period[eé]rica/i, /\bEAP\b/i], negative: [/sin\s+enfermedad\s+vascular/i] },
+  { field: "vascular", positive: [/enfermedad\s+vascular/i, /vasculopat[ií]a/i, /enfermedad\s+arterial\s+perif[eé]rica/i, /\bEAP\b/i], negative: [/sin\s+enfermedad\s+vascular/i] },
   { field: "chf", positive: [/insuficiencia\s+card[ií]aca/i, /\bICC\b/i], negative: [/sin\s+insuficiencia\s+card[ií]aca/i, /niega\s+ICC/i] },
+  { field: "af", positive: [/fibrilaci[oó]n\s+auricular/i, /flutter\s+auricular/i, /\bFA\b/i], negative: [/sin\s+(?:fibrilaci[oó]n\s+auricular|FA)/i, /niega\s+(?:fibrilaci[oó]n\s+auricular|FA)/i] },
+  { field: "ascvd", positive: [/enfermedad\s+coronaria/i, /cardiopat[ií]a\s+isqu[eé]mica/i, /\bIAM\b/i, /infarto\s+(?:agudo\s+)?de\s+miocardio/i, /angioplastia\s+coronaria/i, /\bATC\b/i, /\bCRM\b/i, /bypass\s+coronario/i], negative: [/sin\s+enfermedad\s+coronaria/i, /niega\s+(?:IAM|infarto)/i] },
 ];
 
+function allPatternMatches(text, patterns, polarity) {
+  const out = [];
+  for (const p of patterns || []) {
+    const flags = p.flags.includes("g") ? p.flags : p.flags + "g";
+    const re = new RegExp(p.source, flags);
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      const before = text.slice(Math.max(0, m.index - 30), m.index);
+      if (polarity === "si" && /\b(sin|niega|no|ausencia de|negativo para|descarta|ex[- ]?)\s+[\wáéíóúñÁÉÍÓÚÑ-]*\s*$/i.test(before)) {
+        if (re.lastIndex === m.index) re.lastIndex++;
+        continue;
+      }
+      out.push({ index: m.index, value: polarity, snippet: m[0] });
+      if (re.lastIndex === m.index) re.lastIndex++;
+    }
+  }
+  return out;
+}
+
+function lastBinaryEvidence(text, positive, negative) {
+  const candidates = [
+    ...allPatternMatches(text, positive, "si"),
+    ...allPatternMatches(text, negative, "no"),
+  ].sort((a, b) => a.index - b.index);
+  return candidates.length ? candidates[candidates.length - 1] : null;
+}
+
 function detectSmoking(text) {
-  if (/ex[- ]?(tabaquis\w*|TBQ)/i.test(text)) return { value: "no", snippet: findMatch(text, [/ex[- ]?(tabaquis\w*|TBQ)[^.,;]*/i]) };
-  if (/niega\s+tabaquismo|no\s+fuma/i.test(text)) return { value: "no", snippet: findMatch(text, [/(niega\s+tabaquismo|no\s+fuma)[^.,;]*/i]) };
-  if (/tabaquis(mo|ta)\w*|\bTBQ\b/i.test(text)) return { value: "si", snippet: findMatch(text, [/[^.,;]*(tabaquis\w*|\bTBQ\b)[^.,;]*/i]) };
-  return null;
+  const negative = [
+    ...allPatternMatches(text, [/ex[- ]?(?:tabaquis\w*|TBQ)/i, /niega\s+tabaquismo/i, /no\s+fuma/i], "no"),
+  ];
+  const positive = allPatternMatches(text, [/tabaquis(?:mo|ta)\w*/i, /\bTBQ\b/i], "si")
+    .filter((m) => !/ex[- ]?$/i.test(text.slice(Math.max(0, m.index - 4), m.index)));
+  const all = [...negative, ...positive].sort((a, b) => a.index - b.index);
+  return all.length ? all[all.length - 1] : null;
 }
 
 const MED_CLASSES = {
@@ -779,6 +890,9 @@ const CAMPO_MAP = {
   ACV_AIT: { field: "stroke", type: "bool" },
   ENF_VASCULAR: { field: "vascular", type: "bool" },
   IC: { field: "chf", type: "bool" },
+  FA: { field: "af", type: "bool" },
+  FIBRILACION_AURICULAR: { field: "af", type: "bool" },
+  ASCVD_PREVIA: { field: "ascvd", type: "bool" },
   TABAQUISMO: { field: "smoker", type: "bool" },
   ESTATINA: { field: "onStatin", type: "bool" },
   ANTIHIPERTENSIVO: { field: "onAntihtn", type: "bool" },
@@ -803,14 +917,20 @@ const CAMPO_MAP = {
 function parseCampoValorBlock(text) {
   const mapped = {};
   const evidence = [];
-  const tokens = text.split(/[\n,]+/).map((t) => t.trim()).filter(Boolean);
+  const unknown = [];
+  // Separa líneas y comas solo cuando la coma parece separar otro CAMPO=VALOR;
+  // evita romper decimales escritos con coma (ej. HBA1C=6,5).
+  const tokens = text.split(/\n+|,\s*(?=[A-Za-zÁÉÍÓÚÑáéíóúñ0-9_]+\s*=)/u).map((t) => t.trim()).filter(Boolean);
   for (const t of tokens) {
-    const m = t.match(/^([A-Za-zÁÉÍÓÚÑáéíóúñ_]+)\s*=\s*(.+)$/);
+    const m = t.match(/^([A-Za-zÁÉÍÓÚÑáéíóúñ0-9_]+)\s*=\s*(.+)$/);
     if (!m) continue;
     const key = m[1].toUpperCase();
     const rawVal = m[2].trim();
     const def = CAMPO_MAP[key];
-    if (!def) continue; // campo no reconocido: se ignora, no se intenta adivinar
+    if (!def) {
+      unknown.push(`${key}=${rawVal}`);
+      continue; // no se adivina: se reporta al usuario como campo no reconocido
+    }
 
     if (rawVal === "?") {
       // No dictado explícitamente. Para booleanos esto debe *pisar* cualquier falso
@@ -843,7 +963,7 @@ function parseCampoValorBlock(text) {
       evidence.push({ field: def.field, label: "Sexo", snippet: `${key}=${rawVal}`, literal: true });
     }
   }
-  return { mapped, evidence };
+  return { mapped, evidence, unknown };
 }
 
 /* Extrae el código del header "— Código: XXXX —" (formato [3 díg. año][3 iniciales][1 díg.], ej. 974JCG0) */
@@ -865,9 +985,9 @@ function parseHcopCombined(text) {
   ];
   const eossMention = heuristic.ok ? heuristic.eossMention : /\bEOSS\b/i.test(text);
   if (Object.keys(mapped).length === 0) {
-    return { ok: false, msg: "No reconocí ningún dato — ni por texto libre ni por bloque CAMPO=VALOR." };
+    return { ok: false, msg: "No reconocí ningún dato — ni por texto libre ni por bloque CAMPO=VALOR.", unknown: literal.unknown || [] };
   }
-  return { ok: true, mapped, evidence, eossMention };
+  return { ok: true, mapped, evidence, eossMention, unknown: literal.unknown || [] };
 }
 
 function parseHcopText(text) {
@@ -881,24 +1001,21 @@ function parseHcopText(text) {
     evidence.push({ field: "age", label: "Edad/Sexo", snippet: ageSex[0] });
   }
 
+  // Para antecedentes con múltiples menciones, la última evidencia válida gana.
+  // Esto respeta el orden cronológico habitual del HCOP (antecedentes viejos arriba,
+  // evolución actual abajo) y evita que una negación antigua pise un diagnóstico posterior.
   for (const { field, positive, negative } of HCOP_BINARY_FIELDS) {
-    const neg = negative ? findMatch(text, negative) : null;
-    if (neg) {
-      mapped[field] = "no";
-      evidence.push({ field, label: FIELD_LABELS[field] || field, snippet: neg });
-      continue;
-    }
-    const pos = findMatch(text, positive);
-    if (pos) {
-      mapped[field] = "si";
-      evidence.push({ field, label: FIELD_LABELS[field] || field, snippet: pos });
+    const hit = lastBinaryEvidence(text, positive, negative);
+    if (hit) {
+      mapped[field] = hit.value;
+      evidence.push({ field, label: FIELD_LABELS[field] || field, snippet: hit.snippet, lastMentionWins: true });
     }
   }
 
   const smoke = detectSmoking(text);
   if (smoke) {
     mapped.smoker = smoke.value;
-    evidence.push({ field: "smoker", label: "Tabaquismo", snippet: smoke.snippet });
+    evidence.push({ field: "smoker", label: "Tabaquismo", snippet: smoke.snippet, lastMentionWins: true });
   }
 
   for (const field in MED_CLASSES) {
@@ -937,12 +1054,21 @@ function parseHcopText(text) {
     evidence.push({ field: "neckLarge", label: "Cuello >40cm", snippet: findMatch(text, [/cuello[^.,;]*(mayor a|>|superior a)\s*40\s*cm[^.,;]*/i]) });
   }
 
-  const pesoMatch = text.match(/peso[:\s]+(\d+(?:[.,]\d+)?)\s*kg/i);
-  if (pesoMatch) { mapped.weight = parseFloat(pesoMatch[1].replace(",", ".")); evidence.push({ field: "weight", label: "Peso", snippet: pesoMatch[0] }); }
-  const tallaMatch = text.match(/talla[:\s]+(\d+(?:[.,]\d+)?)\s*cm/i);
-  if (tallaMatch) { mapped.height = parseFloat(tallaMatch[1].replace(",", ".")); evidence.push({ field: "height", label: "Talla", snippet: tallaMatch[0] }); }
-  const cinturaMatch = text.match(/cintura[:\s]+(\d+(?:[.,]\d+)?)\s*cm/i);
-  if (cinturaMatch) { mapped.waist = parseFloat(cinturaMatch[1].replace(",", ".")); evidence.push({ field: "waist", label: "Cintura", snippet: cinturaMatch[0] }); }
+  function lastNumericMention(re, field, label) {
+    const matches = [...text.matchAll(re)];
+    if (!matches.length) return;
+    const last = matches[matches.length - 1];
+    mapped[field] = parseFloat(last[1].replace(",", "."));
+    evidence.push({
+      field,
+      label,
+      snippet: matches.length > 1 ? `${last[0]} (última de ${matches.length} menciones)` : last[0],
+      lastMentionWins: matches.length > 1,
+    });
+  }
+  lastNumericMention(/peso[:\s]+(\d+(?:[.,]\d+)?)\s*kg/gi, "weight", "Peso");
+  lastNumericMention(/talla[:\s]+(\d+(?:[.,]\d+)?)\s*cm/gi, "height", "Talla");
+  lastNumericMention(/cintura[:\s]+(\d+(?:[.,]\d+)?)\s*cm/gi, "waist", "Cintura");
 
   const uacrRe = /(?:[ií]ndice\s+alb[uú]mina[\/\s]creatinina|\bUACR\b|\bRAC\b|micro\s?alb(?:uminuria)?)\D{0,15}?(\d+(?:[.,]\d+)?)/gi;
   const uacrMatches = [...text.matchAll(uacrRe)];
@@ -962,12 +1088,13 @@ function parseHcopText(text) {
 
 function importFromHclabText(raw) {
   const clean = raw.replace(/\*\*/g, "");
-  // separa por comas, cada segmento tipo "NOMBRE valor"
-  const segments = clean.split(",");
+  // Separa parámetros sin romper decimales con coma: "CR 0,9, TG 140" debe
+  // producir CR=0.9 y TG=140, no CR=0.
+  const segments = clean.split(/\n+|,\s*(?=[A-Za-zÁÉÍÓÚáéíóúñÑ0-9%]+\s*[:\s])/u);
   const mapped = {};
   const found = [];
   for (const seg of segments) {
-    const m = seg.trim().match(/([A-Za-zÁÉÍÓÚáéíóúñÑ%]+)\s*[:\s]\s*([\d.,]+)/);
+    const m = seg.trim().match(/([A-Za-zÁÉÍÓÚáéíóúñÑ0-9%]+)\s*[:\s]\s*([\d.,]+)/);
     if (!m) continue;
     const token = m[1].toUpperCase();
     const value = parseFloat(m[2].replace(",", "."));
@@ -1380,7 +1507,7 @@ function App() {
         data,
         results: evaluated
           .filter((s) => s.complete)
-          .map((s) => ({ id: s.id, name: s.name, value: s.result.value, unit: s.result.unit, read: s.result.read })),
+          .map((s) => ({ id: s.id, name: s.name, value: s.result.value, unit: s.result.unit, category: s.result.category || null, status: s.status, read: s.result.read })),
       };
       const r = await window.storage.set(`record:${code.trim()}`, JSON.stringify(record), false);
       if (driveConnected && driveAccessToken) {
@@ -1482,15 +1609,27 @@ function App() {
     return SCORES.map((s) => {
       const missing = s.required.filter((f) => !hasVal(data[f]));
       const complete = missing.length === 0;
+      const inputErrors = complete ? numericInputErrors(data, s.required) : [];
       let result = null;
       if (complete) {
-        try {
-          result = s.calc(data);
-        } catch (e) {
-          result = { value: "err", unit: "", read: "Error de cálculo — revisar datos ingresados." };
+        if (inputErrors.length) {
+          result = {
+            value: "—",
+            unit: "",
+            status: "invalid_input",
+            read: `Dato(s) fuera de rango plausible: ${inputErrors.join("; ")}. Corregí la carga antes de interpretar este score.`,
+            category: "Dato inválido",
+          };
+        } else {
+          try {
+            result = s.calc(data);
+          } catch (e) {
+            result = { value: "err", unit: "", status: "error", read: "Error de cálculo — revisar datos ingresados." };
+          }
         }
       }
-      return { ...s, missing, complete, result };
+      const status = result?.status || (complete ? "valid" : "incomplete");
+      return { ...s, missing, complete, inputErrors, result, status };
     });
   }, [data]);
 
@@ -1508,7 +1647,7 @@ function App() {
         <div className="mb-6">
           <div className="text-[10px] uppercase tracking-[0.2em] mb-1 flex items-center gap-2" style={{ color: '#5B6478' }}>
             <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: '#5FA35A' }} />
-            Datos guardados en este navegador — sin conexión a Claude ni a un servidor
+            Datos procesados localmente — sin backend propio; Google Drive solo se usa al conectarlo explícitamente
           </div>
           <h1 className="text-2xl font-semibold tracking-tight" style={{ color: '#E7EAF0' }}>Panel de riesgo cardiometabólico</h1>
           <p className="text-sm mt-1" style={{ color: '#8B93A7' }}>Cargá los datos disponibles. Cada score se activa solo cuando tiene todos los parámetros que necesita. Al guardar, se descarga además un <code className="font-mono text-xs px-1 rounded" style={{ background: '#1A1F29' }}>.md</code> para archivar donde quieras.</p>
@@ -1735,6 +1874,11 @@ function App() {
                   {!importResult.ok ? (
                     <div>
                       <div style={{ color: '#D9714E' }}>{importResult.msg}</div>
+                      {importResult.unknown?.length > 0 && (
+                        <div className="mt-1" style={{ color: '#C98A3E' }}>
+                          CAMPO=VALOR no reconocido (no importado): {importResult.unknown.join(", ")}
+                        </div>
+                      )}
                       {importResult.codeStatus && <div className="mt-1" style={{ color: '#8B93A7' }}>{importResult.codeStatus}</div>}
                     </div>
                   ) : (
@@ -1746,9 +1890,15 @@ function App() {
                             <span style={{ color: '#E7EAF0' }}>{e.label}</span>
                             <span style={{ color: '#5B6478' }}> — "{e.snippet}"</span>
                             {e.literal && <span style={{ color: '#5B8DEF' }}> · literal</span>}
+                            {e.lastMentionWins && <span style={{ color: '#8B93A7' }}> · última mención</span>}
                           </li>
                         ))}
                       </ul>
+                      {importResult.unknown?.length > 0 && (
+                        <div className="mt-2" style={{ color: '#C98A3E' }}>
+                          CAMPO=VALOR no reconocido (no importado): {importResult.unknown.join(", ")}
+                        </div>
+                      )}
                       {importResult.codeStatus && (
                         <div className="mt-2" style={{ color: '#5B8DEF' }}>{importResult.codeStatus}</div>
                       )}
@@ -1818,6 +1968,8 @@ function App() {
               <Field label="ACV/AIT previo"><TriSelect value={data.stroke || ""} onChange={set("stroke")} /></Field>
               <Field label="Enf. vascular"><TriSelect value={data.vascular || ""} onChange={set("vascular")} /></Field>
               <Field label="Insuf. cardíaca"><TriSelect value={data.chf || ""} onChange={set("chf")} /></Field>
+              <Field label="FA / flutter auricular"><TriSelect value={data.af || ""} onChange={set("af")} /></Field>
+              <Field label="ASCVD clínica previa"><TriSelect value={data.ascvd || ""} onChange={set("ascvd")} /></Field>
               <Field label="Tabaquismo"><TriSelect value={data.smoker || ""} onChange={set("smoker")} /></Field>
               <Field label="Estatina actual"><TriSelect value={data.onStatin || ""} onChange={set("onStatin")} /></Field>
               <Field label="Antihipertensivo"><TriSelect value={data.onAntihtn || ""} onChange={set("onAntihtn")} /></Field>
@@ -1879,28 +2031,30 @@ function App() {
               {evaluated.map((s) => {
                 const color = GROUP_COLOR[s.group];
                 const pending = (s.engineStatus === "pending" || s.engineStatus === "unvalidated") && s.complete;
+                const blocked = ["not_applicable", "invalid_input", "error"].includes(s.status);
+                const blockedColor = s.status === "invalid_input" || s.status === "error" ? "#D9714E" : "#C98A3E";
                 return (
                   <button
                     key={s.id}
                     onClick={() => setActive(s)}
                     className="text-left rounded-lg p-3 border transition-all"
                     style={
-                      s.complete
-                        ? pending
-                          ? { background: "#1A1F29", borderColor: "#C98A3E", borderStyle: "dashed" }
-                          : { background: color, borderColor: color }
-                        : { background: "#12161E", borderColor: "#232A38" }
+                      !s.complete
+                        ? { background: "#12161E", borderColor: "#232A38" }
+                        : (pending || blocked)
+                        ? { background: "#1A1F29", borderColor: blocked ? blockedColor : "#C98A3E", borderStyle: "dashed" }
+                        : { background: color, borderColor: color }
                     }
                   >
                     <div
                       className="text-[10px] uppercase tracking-wide mb-1"
-                      style={{ color: s.complete && !pending ? "rgba(255,255,255,0.75)" : "#5B6478" }}
+                      style={{ color: s.complete && !pending && !blocked ? "rgba(255,255,255,0.75)" : "#5B6478" }}
                     >
                       {s.group}
                     </div>
                     <div
                       className="text-sm font-semibold"
-                      style={{ color: s.complete && !pending ? "#0D1017" : "#8B93A7" }}
+                      style={{ color: s.complete && !pending && !blocked ? "#0D1017" : "#8B93A7" }}
                     >
                       {s.name}
                     </div>
@@ -1909,7 +2063,12 @@ function App() {
                         Falta {s.missing.length} dato{s.missing.length !== 1 ? "s" : ""}
                       </div>
                     )}
-                    {s.complete && pending && (
+                    {s.complete && blocked && (
+                      <div className="mt-1 text-[11px]" style={{ color: blockedColor }}>
+                        {s.status === "not_applicable" ? "No aplicable — ver detalle" : "Dato/cálculo inválido — revisar"}
+                      </div>
+                    )}
+                    {s.complete && pending && !blocked && (
                       <div className="mt-1">
                         {s.engineStatus === "unvalidated" ? (
                           <>
@@ -1923,7 +2082,7 @@ function App() {
                         )}
                       </div>
                     )}
-                    {s.complete && !pending && (
+                    {s.complete && !pending && !blocked && (
                       <div className="text-lg font-mono font-semibold mt-1" style={{ color: "#0D1017" }}>
                         {s.result.value} <span className="text-xs">{s.result.unit}</span>
                       </div>
@@ -2035,7 +2194,7 @@ window.storage = {
    queda, devuelve null. */
 function buildHcopScoreLine(evaluated) {
   const parts = evaluated
-    .filter((s) => s.complete && s.result && s.result.value !== "—" && s.result.value !== "err")
+    .filter((s) => s.complete && s.status === "valid" && s.result && s.result.value !== "—" && s.result.value !== "err")
     .map((s) => {
       const r = s.result;
       let out = `${s.name}: ${r.value}${r.unit ? " " + r.unit : ""}`;
@@ -2056,17 +2215,46 @@ function buildHcopScoreLine(evaluated) {
 }
 
 function buildMarkdown(code, data, evaluated) {
-  const fecha = new Date().toLocaleDateString("es-AR");
+  const fecha = new Date().toLocaleString("es-AR");
   const done = evaluated.filter((s) => s.complete);
+  const inputOrder = [
+    "age", "sex", "weight", "height", "waist", "sbp",
+    "htn", "dm", "disglucemia", "stroke", "vascular", "chf", "af", "ascvd", "smoker",
+    "onStatin", "onAntihtn", "anticoag", "ast", "alt", "platelets", "creatinine",
+    "uacr", "hba1c", "tgs", "glucose", "totalChol", "hdl", "lacCountry",
+  ];
+  const displayValue = (field, value) => {
+    if (value === "si") return "Sí";
+    if (value === "no") return "No";
+    if (field === "sex") return value === "M" ? "Masculino" : value === "F" ? "Femenino" : value;
+    return value;
+  };
+
   let md = `# Riesgo cardiometabólico — ${code || "s/código"}\n\n`;
-  md += `Fecha de carga: ${fecha}\n\n`;
-  md += `## Scores calculados\n\n`;
+  md += `Fecha de carga: ${fecha}\n`;
+  md += `Versión de la aplicación: ${APP_VERSION}\n`;
+  md += `Versión de esquema: ${SCHEMA_VERSION}\n\n`;
+
+  md += `## Datos utilizados\n\n`;
+  const presentInputs = inputOrder.filter((f) => hasVal(data[f]));
+  if (!presentInputs.length) {
+    md += "_Sin datos de entrada consignados._\n\n";
+  } else {
+    for (const field of presentInputs) {
+      const label = field === "lacCountry" ? "País SCORE2-LAC" : (FIELD_LABELS[field] || field);
+      md += `- ${label}: ${displayValue(field, data[field])}\n`;
+    }
+    md += `\n`;
+  }
+
+  md += `## Scores\n\n`;
   if (done.length === 0) {
     md += "_Sin scores completos todavía._\n";
   } else {
     for (const s of done) {
-      md += `**${s.name}** (${s.group}): ${s.result.value}${s.result.unit ? " " + s.result.unit : ""}\n`;
-      md += `${s.result.read}\n\n`;
+      md += `**${s.name}** (${s.group}): ${s.result.value}${s.result.unit ? " " + s.result.unit : ""}`;
+      if (s.result.category) md += ` — ${s.result.category}`;
+      md += `\n${s.result.read}\n\n`;
     }
   }
   return md;
