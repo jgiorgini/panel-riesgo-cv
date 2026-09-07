@@ -1,0 +1,42 @@
+name: Apply clinical safety v1 patch
+
+on:
+  push:
+    branches:
+      - improve/clinical-safety-v1
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: improve/clinical-safety-v1
+          fetch-depth: 0
+
+      - name: Apply tested patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 --decode .github/patches/clinical-safety-v1.patch.gz.b64 | gzip -dc > /tmp/clinical-safety.patch
+          patch --forward --batch index.html < /tmp/clinical-safety.patch
+          grep -q 'const APP_VERSION = "1.1.0"' index.html
+          grep -q 'id: "cha2ds2va"' index.html
+          grep -q 'function preventAscvdCategory' index.html
+          grep -q 'ASCVD clínica previa' index.html
+          git diff --check
+
+      - name: Commit patched application
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git commit -m "Improve clinical safety and parser reliability"
+          git push origin HEAD:improve/clinical-safety-v1
