@@ -25,7 +25,7 @@ const { useState, useMemo } = React;
 
 /* ---------- utilidades de cálculo ---------- */
 
-const APP_VERSION = "1.1.0";
+const APP_VERSION = "1.1.1";
 const SCHEMA_VERSION = 2;
 
 const num = (v) => (v === "" || v === null || v === undefined ? null : parseFloat(v));
@@ -1093,8 +1093,20 @@ function importFromHclabText(raw) {
   const segments = clean.split(/\n+|,\s*(?=[A-Za-zÁÉÍÓÚáéíóúñÑ0-9%]+\s*[:\s])/u);
   const mapped = {};
   const found = [];
+  const skipped = [];
   for (const seg of segments) {
-    const m = seg.trim().match(/([A-Za-zÁÉÍÓÚáéíóúñÑ0-9%]+)\s*[:\s]\s*([\d.,]+)/);
+    const trimmed = seg.trim();
+    // "no-HDL" / "no HDL" / "colesterol no-HDL" NO es HDL. No tiene alias propio en
+    // HCLAB_ALIASES, así que sin este chequeo el regex de abajo matchea igual el "HDL"
+    // que viene después del "no" (el límite de palabra antes de H se cumple aunque haya
+    // un guion o espacio adelante) y lo carga como si fuera HDL real. El no-HDL ronda
+    // 130-160 mg/dL, muy por encima del rango 20-100 de HDL — de ahí el falso "HDL fuera
+    // de rango" en PREVENT. Se descarta el segmento entero en vez de adivinar.
+    if (/\bno[\s-]?hdl\b/i.test(trimmed)) {
+      skipped.push(trimmed);
+      continue;
+    }
+    const m = trimmed.match(/([A-Za-zÁÉÍÓÚáéíóúñÑ0-9%]+)\s*[:\s]\s*([\d.,]+)/);
     if (!m) continue;
     const token = m[1].toUpperCase();
     const value = parseFloat(m[2].replace(",", "."));
@@ -1110,7 +1122,7 @@ function importFromHclabText(raw) {
   if (found.length === 0) {
     return { ok: false, msg: "No reconocí ningún parámetro. Revisá que las abreviaturas coincidan con la tabla acordada." };
   }
-  return { ok: true, mapped, found };
+  return { ok: true, mapped, found, skipped };
 }
 
 /* ---------- PREVENT (AHA, coeficientes oficiales del paquete STATA v2024) ---------- */
@@ -1575,9 +1587,9 @@ function App() {
     }
     try {
       await navigator.clipboard.writeText(line);
-      setStatus("Línea de scores copiada — pegala en el encabezado del HCOP.");
+      setStatus("Bloque de scores copiado (uno por línea) — pegalo en el HCOP.");
     } catch (e) {
-      setStatus(`No se pudo copiar automáticamente. Línea: ${line}`);
+      setStatus(`No se pudo copiar automáticamente. Bloque: ${line}`);
     }
   };
 
@@ -1815,7 +1827,7 @@ function App() {
               </div>
               <p className="text-xs mb-2" style={{ color: '#8B93A7' }}>
                 {importMode === "hclab"
-                  ? 'Pegá la línea de HCLAB tal cual te la genero en el chat (ej. "GOT 22, GPT 18, PLAQ 230, CR 0,9, TG 140, GLU 95, COL 190, HDL 42"). El texto en negrita se ignora, no afecta el parseo.'
+                  ? 'Pegá la línea de HCLAB tal cual te la genero en el chat (ej. "GOT 22, GPT 18, PLAQ 230, CR 0,9, TG 140, GLU 95, COL 190, HDL 42"). El texto en negrita se ignora, no afecta el parseo. Cualquier mención de "no-HDL"/"no HDL" se descarta automáticamente (no es HDL).'
                   : 'Pegá el documento JSON de la muestra (colección "muestras" de Firestore) o un array de muestras — se toma la más reciente. El nombre del paciente se descarta, nunca se guarda acá.'}
               </p>
               <textarea
@@ -1833,7 +1845,14 @@ function App() {
                   {!importResult.ok ? (
                     <div style={{ color: '#D9714E' }}>{importResult.msg}</div>
                   ) : importMode === "hclab" ? (
-                    <div className="" style={{ color: '#5FA35A' }}>Importados: {importResult.found.join(", ")}</div>
+                    <div>
+                      <div style={{ color: '#5FA35A' }}>Importados: {importResult.found.join(", ")}</div>
+                      {importResult.skipped?.length > 0 && (
+                        <div className="mt-1" style={{ color: '#C98A3E' }}>
+                          Descartado por ser "no-HDL" (no es HDL): {importResult.skipped.join(" · ")}
+                        </div>
+                      )}
+                    </div>
                   ) : (
                     <div className="" style={{ color: '#8B93A7' }}>
                       <div>Muestra del {importResult.fecha || "s/fecha"} ({importResult.count} encontrada{importResult.count !== 1 ? "s" : ""} en el JSON, se tomó la más reciente).</div>
@@ -2186,12 +2205,12 @@ window.storage = {
 };
 
 /* ---------- exportación a Markdown (para archivar en Drive u otro lado) ---------- */
-/* Línea de encabezado para pegar en el HCOP, formato — SCORE2-LAC: XX% — PREVENT: XX% —
-   (mismo patrón que ya usás para Lp(a)). Incluye TODOS los scores que estén completos
-   (los "coloreados" en el panel) y cuyo resultado sea un valor calculado real — se
-   excluyen los que quedaron completos pero sin poder calcularse (value "—" por estar
-   fuera del rango validado del modelo, o "err"). Mantiene el orden del panel. Si ninguno
-   queda, devuelve null. */
+/* Bloque para pegar en el HCOP: un score por línea (formato "— NOMBRE: valor unidad —"),
+   igual al patrón que ya usás para Lp(a) pero en vertical en vez de todo en una sola línea
+   larga. Incluye TODOS los scores que estén completos (los "coloreados" en el panel) y
+   cuyo resultado sea un valor calculado real — se excluyen los que quedaron completos pero
+   sin poder calcularse (value "—" por estar fuera del rango validado del modelo, o "err").
+   Mantiene el orden del panel. Si ninguno queda, devuelve null. */
 function buildHcopScoreLine(evaluated) {
   const parts = evaluated
     .filter((s) => s.complete && s.status === "valid" && s.result && s.result.value !== "—" && s.result.value !== "err")
@@ -2208,10 +2227,10 @@ function buildHcopScoreLine(evaluated) {
           out += ` [ref.: ${cutoffText}]`;
         }
       }
-      return out;
+      return `— ${out}`;
     });
   if (parts.length === 0) return null;
-  return `— ${parts.join(" — ")} —`;
+  return parts.join("\n");
 }
 
 function buildMarkdown(code, data, evaluated) {
