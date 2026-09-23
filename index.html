@@ -25,11 +25,38 @@ const { useState, useMemo } = React;
 
 /* ---------- utilidades de cálculo ---------- */
 
-const APP_VERSION = "1.1.1";
+const APP_VERSION = "1.1.2";
 const SCHEMA_VERSION = 2;
 
 const num = (v) => (v === "" || v === null || v === undefined ? null : parseFloat(v));
 const has = (v) => v !== "" && v !== null && v !== undefined && !Number.isNaN(v);
+
+/* Normaliza plaquetas a la unidad usada por FIB-4: 10^9/L (= miles/mm3).
+   Acepta 250, 250.000, 250,000 y 250000 como equivalentes a 250.
+   Los valores enteros >=10000 sin separador se interpretan como recuento absoluto /mm3.
+   Valores intermedios fuera de rango (p. ej. 2500) no se "corrigen" automáticamente:
+   quedan sujetos a la validación de plausibilidad. */
+function normalizePlatelets(v) {
+  if (v === "" || v === null || v === undefined) return null;
+
+  const raw = String(v).trim().replace(/\s/g, "");
+  if (!raw) return null;
+
+  // Separador de miles explícito: 250.000 o 250,000
+  if (/^\d{1,3}(?:[.,]\d{3})+$/.test(raw)) {
+    const absolute = Number(raw.replace(/[.,]/g, ""));
+    return Number.isFinite(absolute) ? absolute / 1000 : null;
+  }
+
+  // Decimal habitual con punto o coma.
+  const n = Number(raw.replace(",", "."));
+  if (!Number.isFinite(n)) return null;
+
+  // Recuento absoluto sin separador: 250000/mm3 -> 250 x10^9/L.
+  if (Number.isInteger(n) && n >= 10000) return n / 1000;
+
+  return n;
+}
 
 /* Rangos de plausibilidad: bloquean errores de carga claramente imposibles antes de
    que puedan propagarse a fórmulas clínicas. Los rangos de VALIDACIÓN propios de cada
@@ -57,7 +84,7 @@ function numericInputErrors(data, fields) {
   for (const field of fields) {
     const rule = NUMERIC_RULES[field];
     if (!rule || !has(data[field])) continue;
-    const v = num(data[field]);
+    const v = field === "platelets" ? normalizePlatelets(data[field]) : num(data[field]);
     const [min, max] = rule;
     if (!Number.isFinite(v) || v < min || v > max) {
       errors.push(`${FIELD_LABELS[field] || field}: ${data[field]} (rango plausible ${min}–${max})`);
@@ -176,7 +203,7 @@ const SCORES = [
     group: "Hepático",
     required: ["age", "ast", "alt", "platelets"],
     calc: (d) => {
-      const age = num(d.age), ast = num(d.ast), alt = num(d.alt), plt = num(d.platelets);
+      const age = num(d.age), ast = num(d.ast), alt = num(d.alt), plt = normalizePlatelets(d.platelets);
       const v = (age * ast) / (plt * Math.sqrt(alt));
       let read, code;
       if (v < 1.45) { read = "Baja probabilidad de fibrosis avanzada"; code = "baja"; }
@@ -1090,7 +1117,9 @@ function importFromHclabText(raw) {
   const clean = raw.replace(/\*\*/g, "");
   // Separa parámetros sin romper decimales con coma: "CR 0,9, TG 140" debe
   // producir CR=0.9 y TG=140, no CR=0.
-  const segments = clean.split(/\n+|,\s*(?=[A-Za-zÁÉÍÓÚáéíóúñÑ0-9%]+\s*[:\s])/u);
+  // Incluye guiones, paréntesis y "/" en el nombre del siguiente analito.
+  // Así "TG 78, NO-HDL 157" se separa ANTES de descartar NO-HDL y TG no se pierde.
+  const segments = clean.split(/\n+|,\s*(?=[A-Za-zÁÉÍÓÚáéíóúñÑ0-9%()\/-]+\s*[:\s])/u);
   const mapped = {};
   const found = [];
   const skipped = [];
@@ -1109,10 +1138,14 @@ function importFromHclabText(raw) {
     const m = trimmed.match(/([A-Za-zÁÉÍÓÚáéíóúñÑ0-9%]+)\s*[:\s]\s*([\d.,]+)/);
     if (!m) continue;
     const token = m[1].toUpperCase();
-    const value = parseFloat(m[2].replace(",", "."));
-    if (isNaN(value)) continue;
+    const rawValue = m[2];
+
     for (const field in HCLAB_ALIASES) {
       if (HCLAB_ALIASES[field].includes(token)) {
+        const value = field === "platelets"
+          ? normalizePlatelets(rawValue)
+          : parseFloat(rawValue.replace(",", "."));
+        if (!Number.isFinite(value)) break;
         mapped[field] = value;
         found.push(`${token}=${value}`);
         break;
