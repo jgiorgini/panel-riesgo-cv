@@ -23,7 +23,7 @@
 <script type="text/plain" id="app-source">
 const { useState, useMemo } = React;
 
-const APP_VERSION = "1.1.3";
+const APP_VERSION = "1.1.4";
 
 /* ---------- utilidades de cálculo ---------- */
 
@@ -263,6 +263,28 @@ const SCORES = [
     },
   },
   {
+    id: "remnant_chol",
+    name: "Colesterol remanente",
+    group: "Metabólico",
+    required: ["totalChol", "hdl", "ldl"],
+    calc: (d) => {
+      const tc = num(d.totalChol), hdl = num(d.hdl), ldl = num(d.ldl);
+      const v = tc - hdl - ldl;
+      const read = "Valor continuo. Referencia: <20 mg/dL bajo · 20–29 mg/dL intermedio/elevado · ≥30 mg/dL elevado.";
+      const scale = {
+        type: "continuous",
+        value: v,
+        min: 0,
+        max: Math.max(60, Math.ceil(v / 10) * 10),
+        cutoffs: [
+          { value: 20, label: "20–29 mg/dL" },
+          { value: 30, label: "≥30 mg/dL" },
+        ],
+      };
+      return { value: v.toFixed(0), unit: "mg/dL", read, scale };
+    },
+  },
+  {
     id: "tyg",
     name: "TyG index",
     group: "Metabólico",
@@ -499,7 +521,7 @@ const SCORES = [
 const FIELD_LABELS = {
   age: "Edad", sex: "Sexo", ast: "AST/GOT", alt: "ALT/GPT", platelets: "Plaquetas",
   creatinine: "Creatinina", tgs: "Triglicéridos", glucose: "Glucemia", totalChol: "Col. total",
-  hdl: "HDL", uacr: "UACR (albúmina/creatinina en orina)", hba1c: "HbA1c", htn: "HTA", dm: "Diabetes",
+  ldl: "LDL", hdl: "HDL", uacr: "UACR (albúmina/creatinina en orina)", hba1c: "HbA1c", htn: "HTA", dm: "Diabetes",
   disglucemia: "Disglucemia (prediabetes)",
   stroke: "ACV/AIT previo", vascular: "Enf. vascular", chf: "Insuf. cardíaca", sbp: "TA sistólica",
   smoker: "Tabaquismo", onStatin: "Estatina actual", onAntihtn: "Antihipertensivo actual",
@@ -704,6 +726,7 @@ const LAB_KEY_MAP = {
   TG: "tgs",
   Glucosa: "glucose",
   Col: "totalChol",
+  LDL: "ldl",
   HDL: "hdl",
 };
 
@@ -715,6 +738,7 @@ const HCLAB_ALIASES = {
   tgs: ["TG", "TRIG"],
   glucose: ["GLU", "GLUC", "GLICEMIA", "GLUCEMIA"],
   totalChol: ["COL", "COLT", "COLESTEROL", "CT"],
+  ldl: ["LDL"],
   hdl: ["HDL"],
   hba1c: ["HBA1C", "A1C"],
 };
@@ -832,6 +856,7 @@ const CAMPO_MAP = {
   CT: { field: "totalChol", type: "number" },
   COLT: { field: "totalChol", type: "number" },
   COLESTEROL_TOTAL: { field: "totalChol", type: "number" },
+  LDL: { field: "ldl", type: "number" },
   HDL: { field: "hdl", type: "number" },
   HBA1C: { field: "hba1c", type: "number" },
   MENOPAUSIA_PRECOZ: { field: "menopausiaPrecoz", type: "bool" },
@@ -1866,6 +1891,7 @@ function App() {
               <Field label="Triglicéridos"><NumInput value={data.tgs || ""} onChange={set("tgs")} /></Field>
               <Field label="Glucemia"><NumInput value={data.glucose || ""} onChange={set("glucose")} /></Field>
               <Field label="Col. total"><NumInput value={data.totalChol || ""} onChange={set("totalChol")} /></Field>
+              <Field label="LDL"><NumInput value={data.ldl || ""} onChange={set("ldl")} /></Field>
               <Field label="HDL"><NumInput value={data.hdl || ""} onChange={set("hdl")} /></Field>
             </Section>
 
@@ -2104,14 +2130,14 @@ function buildHcopScoreLine(evaluated) {
           const item = r.scale.items.find((it) => it.code === r.scale.currentCode);
           if (item) out += ` [ref.: ${item.label}]`;
         } else if (r.scale.type === "continuous" && r.scale.cutoffs && r.scale.cutoffs.length) {
-          const cutoffText = r.scale.cutoffs.map((c) => `${c.label} ${c.value}`).join(" / ");
+          const cutoffText = r.scale.cutoffs.map((c) => `${c.label}: ${c.value}`).join(" / ");
           out += ` [ref.: ${cutoffText}]`;
         }
       }
-      return out;
+      return `— ${out}`;
     });
   if (parts.length === 0) return null;
-  return `— ${parts.join(" — ")} —`;
+  return parts.join("\n");
 }
 
 function buildMarkdown(code, data, evaluated) {
