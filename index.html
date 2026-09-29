@@ -2130,8 +2130,12 @@ function buildHcopScoreLine(evaluated) {
           const item = r.scale.items.find((it) => it.code === r.scale.currentCode);
           if (item) out += ` [ref.: ${item.label}]`;
         } else if (r.scale.type === "continuous" && r.scale.cutoffs && r.scale.cutoffs.length) {
-          const cutoffText = r.scale.cutoffs.map((c) => `${c.label}: ${c.value}`).join(" / ");
-          out += ` [ref.: ${cutoffText}]`;
+          if (s.id === "remnant_chol") {
+            out += " [ref.: <20 / 20–29 / ≥30 mg/dL]";
+          } else {
+            const cutoffText = r.scale.cutoffs.map((c) => `${c.label}: ${c.value}`).join(" / ");
+            out += ` [ref.: ${cutoffText}]`;
+          }
         }
       }
       return `— ${out}`;
